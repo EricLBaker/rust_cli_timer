@@ -126,23 +126,30 @@ fn play_sound_with_dialog(popup_title: &str) {
 /// Logs the timer event immediately when the timer completes (before the popup).
 fn run_timer(duration: Duration, duration_str: &str, popup_message: String, live: bool, bg: bool) {
     if live {
-        // Live countdown loop.
-        for remaining in (0..=duration.as_secs()).rev() {
-            let hours = remaining / 3600;
-            let minutes = (remaining % 3600) / 60;
-            let seconds = remaining % 60;
-            print!("\rTime remaining: {:02}:{:02}:{:02}", hours, minutes, seconds);
+        let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        // Convert duration to milliseconds.
+        let total_millis = duration.as_secs() * 1000;
+        // Update every 100ms for spinner spinning 5 times faster than a 500ms update.
+        let update_interval = 100;
+        // total_ticks is the number of 100ms intervals.
+        let total_ticks = total_millis / update_interval;
+        for tick in (0..=total_ticks).rev() {
+            let remaining_millis = tick * update_interval;
+            let seconds_remaining = remaining_millis / 1000;
+            let hours = seconds_remaining / 3600;
+            let minutes = (seconds_remaining % 3600) / 60;
+            let seconds = seconds_remaining % 60;
+            let spinner = spinner_chars[(tick as usize) % spinner_chars.len()];
+            print!("\r\x1B[32mTime remaining: {:02}:{:02}:{:02} {} \x1B[0m", hours, minutes, seconds, spinner);
             stdout().flush().unwrap();
-            sleep(Duration::from_secs(1));
+            sleep(Duration::from_millis(update_interval));
         }
         println!();
     } else {
-        // Background mode: simply sleep for the full duration.
         sleep(duration);
     }
 
     println!("Time's up!");
-    // Log the event immediately when the timer completes.
     log_timer_event(duration_str, &popup_message, bg);
     play_sound_with_dialog(&popup_message);
 }
