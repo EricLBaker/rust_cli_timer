@@ -1,5 +1,5 @@
 use clap::Parser;
-use chrono::Local;
+use chrono::{Local, TimeZone};
 use daemonize::Daemonize;
 use humantime::parse_duration;
 use native_dialog::MessageDialog;
@@ -8,23 +8,32 @@ use std::fs::{OpenOptions, File};
 use std::io::{stdout, Write, BufRead, BufReader, Cursor, Read};
 use std::thread::sleep;
 use std::time::Duration;
+use std::process;
+use libc;
 
-/// CLI timer that can either run a timer or show history.
+/// CLI timer that can either run a timer or show history or a live view of active timers.
 ///
 /// Run a timer with:
 ///   timer_cli [--fg] <duration> [message]
 ///
 /// Show history with:
 ///   timer_cli --history [COUNT]
+///
+/// Show live view with:
+///   timer_cli --live
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
-    /// Show the last N timer entries from history if N provided, else defaults to last 20.
+    /// Show the last N timer entries from history if N provided, else defaults to last 10.
     /// If provided, no timer is run.
-    #[arg(long, value_name = "HISTORY", num_args = 0..=1, default_missing_value = "20")]
+    #[arg(long, value_name = "HISTORY", num_args = 0..=1, default_missing_value = "10")]
     history: Option<usize>,
 
-    /// Duration string (e.g., "2s", "1min 30 seconds"). Required if not showing history.
+    /// Show a live view of active timers.
+    #[arg(long)]
+    live: bool,
+
+    /// Duration string (e.g., "2s", "1min 30 seconds"). Required if not using --history or --live.
     duration: Option<String>,
 
     /// Optional message to include in the alarm popup.
@@ -73,10 +82,10 @@ fn show_history(count: usize) {
     let log_path = history_log_path();
     let file = File::open(&log_path).unwrap_or_else(|_| {
         eprintln!("No history file found.");
-        std::process::exit(1);
+        process::exit(1);
     });
     let reader = BufReader::new(file);
-    let lines: Vec<_> = reader.lines().filter_map(Result::ok).collect();
+    let lines: Vec<_> = reader.lines().filter_map(|line| line.ok()).collect();
 
     println!(
         "{:<20} | {:<12} | {:<20} | {}",
@@ -85,6 +94,165 @@ fn show_history(count: usize) {
     println!("{}", "-".repeat(70));
     for line in lines.iter().take(count) {
         println!("{}", line);
+    }
+}
+
+/// Registers an active timer by creating a file in /tmp/timer_cli_active.
+fn register_active_timer(duration_str: &str, message: &str) -> std::io::Result<String> {
+    let active_dir = "/tmp/timer_cli_active";
+    std::fs::create_dir_all(active_dir)?;
+    let pid = std::process::id();
+    let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    // Create an entry with timer details.
+    let entry = format!("PID: {} | Started: {} | Duration: {} | Message: {}\n", pid, now, duration_str, message);
+    let file_path = format!("{}/{}.timer", active_dir, pid);
+    std::fs::write(&file_path, entry)?;
+    Ok(file_path)
+}
+
+/// Unregisters an active timer by deleting its file.
+fn unregister_active_timer(file_path: &str) {
+    let _ = std::fs::remove_file(file_path);
+}
+
+/// Displays a live view of active timers by reading files from /tmp/timer_cli_active.
+/// The view clears the screen completely on each refresh so that duplicate printing is avoided.
+/// Expired timers are removed, and each active timer shows the remaining time (colored red).
+fn show_active_live() {
+    use std::sync::mpsc;
+    use std::io::{self, BufRead, stdout};
+    use std::thread;
+    use std::time::Duration;
+
+    let active_dir = "/tmp/timer_cli_active";
+
+    // Spawn a thread to listen for user input without blocking the main loop.
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            if let Ok(input) = line {
+                let trimmed = input.trim().to_string();
+                if !trimmed.is_empty() {
+                    // Send input to main thread.
+                    let _ = tx.send(trimmed);
+                }
+            }
+        }
+    });
+
+    loop {
+        // Clear the screen and move cursor to the top.
+        print!("\x1B[2J\x1B[H");
+        println!("Active Timers:");
+        println!("{}", "-".repeat(70));
+
+        // Gather active timer files and sort them for consistent numbering.
+        let mut active_files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(active_dir) {
+            for entry in entries.flatten() {
+                active_files.push(entry.path());
+            }
+        }
+        active_files.sort();
+
+        // Display active timers with numbering.
+        for (index, path) in active_files.iter().enumerate() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                // Expected format:
+                // PID: <pid> | Started: <YYYY-MM-DD HH:MM:SS> | Duration: <duration> | Message: <msg>
+                let parts: Vec<&str> = content.split(" | ").collect();
+                if parts.len() < 4 {
+                    println!("{}: {}", index + 1, content.trim());
+                    continue;
+                }
+                let pid_part = parts[0].trim();
+                let started_part = parts[1].trim();
+                let duration_part = parts[2].trim();
+                let message_part = parts[3].trim();
+                let start_str = started_part.strip_prefix("Started: ").unwrap_or("");
+                let duration_str = duration_part.strip_prefix("Duration: ").unwrap_or("");
+                let message = message_part.strip_prefix("Message: ").unwrap_or("");
+                if let Ok(start_time) =
+                    chrono::NaiveDateTime::parse_from_str(start_str, "%Y-%m-%d %H:%M:%S")
+                {
+                    let start_time: chrono::DateTime<chrono::Local> =
+                        chrono::Local.from_local_datetime(&start_time).unwrap();
+                    if let Ok(dur) = humantime::parse_duration(duration_str) {
+                        let end_time = start_time + chrono::Duration::from_std(dur).unwrap();
+                        let now = chrono::Local::now();
+                        let time_left = end_time - now;
+                        if time_left.num_seconds() <= 0 {
+                            // Remove expired timer file.
+                            let _ = std::fs::remove_file(&path);
+                            continue;
+                        }
+                        let secs = time_left.num_seconds();
+                        let hours = secs / 3600;
+                        let minutes = (secs % 3600) / 60;
+                        let seconds = secs % 60;
+                        // Color the "Time Left" in red.
+                        let time_left_str = format!(
+                            "\x1B[31m{:02}:{:02}:{:02}\x1B[0m",
+                            hours, minutes, seconds
+                        );
+                        println!(
+                            "{}: {} | Started: {} | Duration: {} | Message: {} | Time Left: {}",
+                            index + 1,
+                            pid_part,
+                            start_str,
+                            duration_str,
+                            message,
+                            time_left_str
+                        );
+                    } else {
+                        println!("{}: {}", index + 1, content.trim());
+                    }
+                } else {
+                    println!("{}: {}", index + 1, content.trim());
+                }
+            }
+        }
+
+        // Prompt the user to enter a number to kill a timer.
+        println!("\nEnter number to kill and press enter (or Ctrl+C to exit): ");
+        stdout().flush().unwrap();
+
+        // Check if there is user input available (non-blocking).
+        if let Ok(input) = rx.try_recv() {
+            if let Ok(num) = input.parse::<usize>() {
+                if num > 0 && num <= active_files.len() {
+                    let path = &active_files[num - 1];
+                    // Read the file to get the PID.
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        let parts: Vec<&str> = content.split(" | ").collect();
+                        if !parts.is_empty() {
+                            if let Some(pid_str) = parts[0].strip_prefix("PID: ") {
+                                if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                                    // Send SIGTERM to the process.
+                                    unsafe {
+                                        libc::kill(pid, libc::SIGTERM);
+                                    }
+                                    println!("Killed timer with PID {}", pid);
+                                }
+                            }
+                        }
+                    }
+                    // Remove the timer file.
+                    let _ = std::fs::remove_file(&path);
+                    // Pause briefly so the message is visible.
+                    thread::sleep(Duration::from_secs(2));
+                } else {
+                    println!("Invalid selection.");
+                    thread::sleep(Duration::from_secs(2));
+                }
+            } else {
+                println!("Invalid input.");
+                thread::sleep(Duration::from_secs(2));
+            }
+        }
+        // Refresh the view every second.
+        thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -129,9 +297,8 @@ fn run_timer(duration: Duration, duration_str: &str, popup_message: String, live
         let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         // Convert duration to milliseconds.
         let total_millis = duration.as_secs() * 1000;
-        // Update every 100ms for spinner spinning 5 times faster than a 500ms update.
+        // Update every 100ms so the spinner spins 5 times faster than a 500ms interval.
         let update_interval = 100;
-        // total_ticks is the number of 100ms intervals.
         let total_ticks = total_millis / update_interval;
         for tick in (0..=total_ticks).rev() {
             let remaining_millis = tick * update_interval;
@@ -150,6 +317,7 @@ fn run_timer(duration: Duration, duration_str: &str, popup_message: String, live
     }
 
     println!("Time's up!");
+    // Log the timer event immediately when the timer completes.
     log_timer_event(duration_str, &popup_message, bg);
     play_sound_with_dialog(&popup_message);
 }
@@ -157,23 +325,29 @@ fn run_timer(duration: Duration, duration_str: &str, popup_message: String, live
 fn main() {
     let args = Args::parse();
 
-    // If the history flag is provided, show history and exit.
+    // If history flag is provided, show history and exit.
     if let Some(count) = args.history {
         show_history(count);
         return;
     }
 
+    // If live flag is provided, show the active timers live view and exit.
+    if args.live {
+        show_active_live();
+        return;
+    }
+
     // Otherwise, we expect a duration.
     let duration_str = args.duration.unwrap_or_else(|| {
-        eprintln!("Duration string required unless using --history");
-        std::process::exit(1);
+        eprintln!("Duration string required unless using --history or --live");
+        process::exit(1);
     });
 
     let duration = match parse_duration(&duration_str) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("Error parsing duration: {}", e);
-            std::process::exit(1);
+            process::exit(1);
         }
     };
 
@@ -185,21 +359,30 @@ fn main() {
 
     println!("Starting timer for {} seconds...", duration.as_secs());
 
-    // Decide whether to run in foreground or background.
+    // For foreground mode, run the timer normally.
     if args.fg {
         run_timer(duration, &duration_str, popup_message.clone(), true, false);
     } else {
-        // Daemonize without locking a pid file so multiple timers can run concurrently.
+        // Daemonize first, then register the timer in the child process.
         let daemonize = Daemonize::new()
             .working_directory(".")
             .umask(0o027);
         match daemonize.start() {
             Ok(_) => {
+                // Now in the daemonized child process; register active timer with correct PID.
+                let active_file = match register_active_timer(&duration_str, &popup_message) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        eprintln!("Error registering active timer: {}", e);
+                        process::exit(1);
+                    }
+                };
                 run_timer(duration, &duration_str, popup_message.clone(), false, true);
+                unregister_active_timer(&active_file);
             }
             Err(e) => {
                 eprintln!("Error daemonizing: {}", e);
-                std::process::exit(1);
+                process::exit(1);
             }
         }
     }
