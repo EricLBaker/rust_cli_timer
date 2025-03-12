@@ -5,7 +5,7 @@ use humantime::parse_duration;
 use native_dialog::MessageDialog;
 use rodio::{Decoder, OutputStream, Sink, Source};
 use std::fs::{OpenOptions, File};
-use std::io::{stdout, Write, BufRead, BufReader, Cursor};
+use std::io::{stdout, Write, BufRead, BufReader, Cursor, Read};
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -30,7 +30,7 @@ struct Args {
     /// Optional message to include in the alarm popup.
     message: Option<String>,
 
-    /// Run timer in foreground
+    /// Run timer in foreground.
     #[arg(short, long, default_value_t = false)]
     fg: bool,
 }
@@ -41,23 +41,31 @@ fn history_log_path() -> String {
     "/tmp/timer_cli_history.log".to_string()
 }
 
-/// Append a log entry to the history log file.
+/// Append a log entry to the history log file by inserting it at the top.
 /// The log format is:
 /// YYYY-MM-DD HH:MM:SS | Duration: <duration> | Message: <message> | Background: <true/false>
 fn log_timer_event(duration: &str, message: &str, bg: bool) {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let log_line = format!(
-        "{} | {:<10} | {:<20} | {}\n",
-        timestamp, duration, message, bg
-    );
+    let new_line = format!("{} | {:<10} | {:<20} | {}\n", timestamp, duration, message, bg);
     let log_path = history_log_path();
+
+    // Read existing content (if any)
+    let mut old_content = String::new();
+    if let Ok(mut file) = File::open(&log_path) {
+        file.read_to_string(&mut old_content).ok();
+    }
+
+    // Write new log entry followed by old content
     let mut file = OpenOptions::new()
+        .write(true)
         .create(true)
-        .append(true)
-        .open(log_path)
-        .expect("Failed to open log file");
-    file.write_all(log_line.as_bytes())
-        .expect("Failed to write to log file");
+        .truncate(true)
+        .open(&log_path)
+        .expect("Failed to open log file for writing");
+    file.write_all(new_line.as_bytes())
+        .expect("Failed to write new log line");
+    file.write_all(old_content.as_bytes())
+        .expect("Failed to write old log lines");
 }
 
 /// Reads the history log file and prints the last `count` entries in a table.
@@ -69,16 +77,13 @@ fn show_history(count: usize) {
     });
     let reader = BufReader::new(file);
     let lines: Vec<_> = reader.lines().filter_map(Result::ok).collect();
-    let total = lines.len();
-    let start = if total > count { total - count } else { 0 };
 
     println!(
         "{:<20} | {:<12} | {:<20} | {}",
         "Timestamp", "Duration", "Message", "Background"
     );
     println!("{}", "-".repeat(70));
-    for line in &lines[start..] {
-        // Each line is already formatted as our log entry.
+    for line in lines.iter().take(count) {
         println!("{}", line);
     }
 }
@@ -86,8 +91,8 @@ fn show_history(count: usize) {
 /// Plays an embedded audio file in a loop while displaying a pop-up dialog.
 /// The sound continues until you dismiss the dialog.
 ///
-/// # Arguments
-/// * `popup_title` - The title of the popup (e.g. the message).
+/// NOTE: The current dialog uses native_dialog, which does not support custom images.
+/// To change the image at the top of the timer's pop-up, consider using a different GUI library.
 fn play_sound_with_dialog(popup_title: &str) {
     // Include the sound file at compile time.
     let audio_data: &[u8] = include_bytes!("../sounds/calm-loop-80576.mp3");
@@ -108,7 +113,6 @@ fn play_sound_with_dialog(popup_title: &str) {
 
     // Show a pop-up dialog.
     MessageDialog::new()
-        .
         .set_title(popup_title)
         .set_text("⌛")
         .show_alert()
