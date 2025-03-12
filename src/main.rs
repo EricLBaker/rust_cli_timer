@@ -12,7 +12,7 @@ use std::time::Duration;
 /// CLI timer that can either run a timer or show history.
 ///
 /// Run a timer with:
-///   timer_cli [--bg] <duration> [message]
+///   timer_cli [--fg] <duration> [message]
 ///
 /// Show history with:
 ///   timer_cli --history [COUNT]
@@ -30,9 +30,9 @@ struct Args {
     /// Optional message to include in the alarm popup.
     message: Option<String>,
 
-    /// Run timer in background (daemonize process so terminal is not blocked)
-    #[arg(short, long, default_value_t = true)]
-    bg: bool,
+    /// Run timer in foreground
+    #[arg(short, long, default_value_t = false)]
+    fg: bool,
 }
 
 /// Returns the path to the history log file.
@@ -108,6 +108,7 @@ fn play_sound_with_dialog(popup_title: &str) {
 
     // Show a pop-up dialog.
     MessageDialog::new()
+        .
         .set_title(popup_title)
         .set_text("⌛")
         .show_alert()
@@ -174,7 +175,9 @@ fn main() {
     println!("Starting timer for {} seconds...", duration.as_secs());
 
     // Decide whether to run in foreground or background.
-    if args.bg {
+    if args.fg {
+        run_timer(duration, &duration_str, popup_message.clone(), true, false);
+    } else {
         // Daemonize without locking a pid file so multiple timers can run concurrently.
         let daemonize = Daemonize::new()
             .working_directory(".")
@@ -188,7 +191,5 @@ fn main() {
                 std::process::exit(1);
             }
         }
-    } else {
-        run_timer(duration, &duration_str, popup_message.clone(), true, false);
     }
 }
