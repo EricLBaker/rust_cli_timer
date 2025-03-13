@@ -1,0 +1,3 @@
+- [ ] Add user config yaml somewhere in system that can be updated via a settings command
+- [ ] Add timer restart button (and including time that it will be restarted for) 
+- [ ] Add timer snooze button (with drop-down if possible? Or set default in config)

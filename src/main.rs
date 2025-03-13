@@ -5,7 +5,7 @@ use humantime::parse_duration;
 use native_dialog::MessageDialog;
 use rodio::{Decoder, OutputStream, Sink, Source};
 use std::fs::{OpenOptions, File};
-use std::io::{stdout, Write, BufRead, BufReader, Cursor, Read};
+use std::io::{Write, BufRead, BufReader, Cursor, Read};
 use std::thread::sleep;
 use std::time::Duration;
 use std::process;
@@ -50,12 +50,12 @@ fn history_log_path() -> String {
     "/tmp/timer_cli_history.log".to_string()
 }
 
-/// Append a log entry to the history log file by inserting it at the top.
+/// Append a log entry for timer creation.
 /// The log format is:
-/// YYYY-MM-DD HH:MM:SS | Duration: <duration> | Message: <message> | Background: <true/false>
-fn log_timer_event(duration: &str, message: &str, bg: bool) {
+/// YYYY-MM-DD HH:MM:SS | CREATED | Duration: <duration> | Message: <message> | Foreground: <true/false>
+fn log_timer_creation(duration: &str, message: &str, fg: bool) {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let new_line = format!("{} | {:<10} | {:<20} | {}\n", timestamp, duration, message, bg);
+    let new_line = format!("{} | {:<10} | {:<20} | {}\n", timestamp, duration, message, fg);
     let log_path = history_log_path();
 
     // Read existing content (if any)
@@ -89,7 +89,7 @@ fn show_history(count: usize) {
 
     println!(
         "{:<20} | {:<12} | {:<20} | {}",
-        "Timestamp", "Duration", "Message", "Background"
+        "Timestamp", "Duration", "Message", "Foreground"
     );
     println!("{}", "-".repeat(70));
     for line in lines.iter().take(count) {
@@ -292,12 +292,13 @@ fn play_sound_with_dialog(popup_title: &str) {
 
 /// Runs the timer, optionally with a live countdown (if `live` is true).
 /// Logs the timer event immediately when the timer completes (before the popup).
-fn run_timer(duration: Duration, duration_str: &str, popup_message: String, live: bool, bg: bool) {
+/// Runs the timer, optionally with a live countdown (if `live` is true).
+fn run_timer(duration: Duration, popup_message: String, live: bool) {
     if live {
         let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         // Convert duration to milliseconds.
         let total_millis = duration.as_secs() * 1000;
-        // Update every 100ms so the spinner spins 5 times faster than a 500ms interval.
+        // Update every 100ms.
         let update_interval = 100;
         let total_ticks = total_millis / update_interval;
         for tick in (0..=total_ticks).rev() {
@@ -308,7 +309,7 @@ fn run_timer(duration: Duration, duration_str: &str, popup_message: String, live
             let seconds = seconds_remaining % 60;
             let spinner = spinner_chars[(tick as usize) % spinner_chars.len()];
             print!("\r\x1B[32mTime remaining: {:02}:{:02}:{:02} {} \x1B[0m", hours, minutes, seconds, spinner);
-            stdout().flush().unwrap();
+            std::io::stdout().flush().unwrap();
             sleep(Duration::from_millis(update_interval));
         }
         println!();
@@ -317,8 +318,6 @@ fn run_timer(duration: Duration, duration_str: &str, popup_message: String, live
     }
 
     println!("Time's up!");
-    // Log the timer event immediately when the timer completes.
-    log_timer_event(duration_str, &popup_message, bg);
     play_sound_with_dialog(&popup_message);
 }
 
@@ -353,23 +352,23 @@ fn main() {
 
     // Prepare the popup message.
     let popup_message = match &args.message {
-        Some(m) => format!("{}", m),
+        Some(m) => m.clone(),
         None => "Time's up!".to_string(),
     };
 
     println!("Starting timer for {} seconds...", duration.as_secs());
 
-    // For foreground mode, run the timer normally.
+    // For foreground mode, log creation and run the timer normally.
     if args.fg {
-        run_timer(duration, &duration_str, popup_message.clone(), true, false);
+        // Log timer creation only once upon submission.
+        log_timer_creation(&duration_str, &popup_message, true);
+        run_timer(duration, popup_message.clone(), true);
     } else {
-        // Daemonize first, then register the timer in the child process.
         let daemonize = Daemonize::new()
             .working_directory(".")
             .umask(0o027);
         match daemonize.start() {
             Ok(_) => {
-                // Now in the daemonized child process; register active timer with correct PID.
                 let active_file = match register_active_timer(&duration_str, &popup_message) {
                     Ok(path) => path,
                     Err(e) => {
@@ -377,7 +376,11 @@ fn main() {
                         process::exit(1);
                     }
                 };
-                run_timer(duration, &duration_str, popup_message.clone(), false, true);
+
+                // Log timer creation for background timers.
+                log_timer_creation(&duration_str, &popup_message, false);
+
+                run_timer(duration, popup_message.clone(), false);
                 unregister_active_timer(&active_file);
             }
             Err(e) => {
