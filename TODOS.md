@@ -21,9 +21,9 @@
 
 
 ## 🏎️ Performance Improvements
-- [ ] More graceful exit from `tt --live`.
+- [X] More graceful exit from `tt --live`.
   - 💭 Currently, takes multiple `ctrl + C` calls to exit and it's slow/clunky.
-- [ ] Live view prints out status every second instead of replacing text in-place.
+- [X] Live view prints out status every second instead of replacing text in-place.
   - 💭 Foreground timer already updates in-place, should use similar approach if possible.
   - 💭 What about entering a temporary file like the interface for nano or vi so it doesn't clutter the terminal window with repeated logs?
 

@@ -115,10 +115,20 @@ fn unregister_active_timer(file_path: &str) {
     let _ = std::fs::remove_file(file_path);
 }
 
-/// Displays a live view of active timers by reading files from /tmp/timer_cli_active.
-/// The view clears the screen completely on each refresh so that duplicate printing is avoided.
-/// Expired timers are removed, and each active timer shows the remaining time (colored red).
+/// Signal handler for SIGINT to exit immediately.
+extern "C" fn handle_sigint(_sig: i32) {
+    process::exit(0);
+}
+
+/// Displays a live view of active timers with in-place updates.
+/// This version moves the cursor up by the previous iteration's line count
+/// and erases each line using ANSI escape codes, so that when timers expire,
+/// their output is removed cleanly.
 fn show_active_live() {
+    unsafe {
+        libc::signal(libc::SIGINT, handle_sigint as usize);
+    }
+
     use std::sync::mpsc;
     use std::io::{self, BufRead, stdout};
     use std::thread;
@@ -134,20 +144,36 @@ fn show_active_live() {
             if let Ok(input) = line {
                 let trimmed = input.trim().to_string();
                 if !trimmed.is_empty() {
-                    // Send input to main thread.
                     let _ = tx.send(trimmed);
                 }
             }
         }
     });
 
-    loop {
-        // Clear the screen and move cursor to the top.
-        print!("\x1B[2J\x1B[H");
-        println!("Active Timers:");
-        println!("{}", "-".repeat(70));
+    let mut first_iteration = true;
+    let mut last_lines = 0;
 
-        // Gather active timer files and sort them for consistent numbering.
+    loop {
+        if !first_iteration {
+            // Move cursor up by the number of lines printed last time
+            print!("\x1B[{}A", last_lines);
+            // Clear each of those lines
+            for _ in 0..last_lines {
+                print!("\x1B[2K\r\n");
+            }
+            // Move cursor up again to start printing new content at the same position
+            print!("\x1B[{}A", last_lines);
+        }
+        first_iteration = false;
+        let mut printed_lines = 0;
+
+        // Print header.
+        println!("Active Timers:");
+        printed_lines += 1;
+        println!("{}", "-".repeat(70));
+        printed_lines += 1;
+
+        // Gather and sort active timer files.
         let mut active_files = Vec::new();
         if let Ok(entries) = std::fs::read_dir(active_dir) {
             for entry in entries.flatten() {
@@ -156,14 +182,13 @@ fn show_active_live() {
         }
         active_files.sort();
 
-        // Display active timers with numbering.
+        // Display each active timer.
         for (index, path) in active_files.iter().enumerate() {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                // Expected format:
-                // PID: <pid> | Started: <YYYY-MM-DD HH:MM:SS> | Duration: <duration> | Message: <msg>
                 let parts: Vec<&str> = content.split(" | ").collect();
                 if parts.len() < 4 {
                     println!("{}: {}", index + 1, content.trim());
+                    printed_lines += 1;
                     continue;
                 }
                 let pid_part = parts[0].trim();
@@ -183,7 +208,6 @@ fn show_active_live() {
                         let now = chrono::Local::now();
                         let time_left = end_time - now;
                         if time_left.num_seconds() <= 0 {
-                            // Remove expired timer file.
                             let _ = std::fs::remove_file(&path);
                             continue;
                         }
@@ -191,9 +215,8 @@ fn show_active_live() {
                         let hours = secs / 3600;
                         let minutes = (secs % 3600) / 60;
                         let seconds = secs % 60;
-                        // Color the "Time Left" in red.
                         let time_left_str = format!(
-                            "\x1B[31m{:02}:{:02}:{:02}\x1B[0m",
+                            "\x1B[32m{:02}:{:02}:{:02}\x1B[0m",
                             hours, minutes, seconds
                         );
                         println!(
@@ -205,56 +228,65 @@ fn show_active_live() {
                             message,
                             time_left_str
                         );
+                        printed_lines += 1;
                     } else {
                         println!("{}: {}", index + 1, content.trim());
+                        printed_lines += 1;
                     }
                 } else {
                     println!("{}: {}", index + 1, content.trim());
+                    printed_lines += 1;
                 }
             }
         }
 
-        // Prompt the user to enter a number to kill a timer.
-        println!("\nEnter number to kill and press enter (or Ctrl+C to exit): ");
+        // Print a blank line and prompt.
+        println!();
+        printed_lines += 1;
+        println!("Enter number to kill and press enter (or Ctrl+C to exit): ");
+        printed_lines += 1;
+
         stdout().flush().unwrap();
 
-        // Check if there is user input available (non-blocking).
+        // Process user input if available.
         if let Ok(input) = rx.try_recv() {
             if let Ok(num) = input.parse::<usize>() {
                 if num > 0 && num <= active_files.len() {
                     let path = &active_files[num - 1];
-                    // Read the file to get the PID.
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         let parts: Vec<&str> = content.split(" | ").collect();
                         if !parts.is_empty() {
                             if let Some(pid_str) = parts[0].strip_prefix("PID: ") {
                                 if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                                    // Send SIGTERM to the process.
                                     unsafe {
                                         libc::kill(pid, libc::SIGTERM);
                                     }
                                     println!("Killed timer with PID {}", pid);
+                                    printed_lines += 1;
                                 }
                             }
                         }
                     }
-                    // Remove the timer file.
                     let _ = std::fs::remove_file(&path);
-                    // Pause briefly so the message is visible.
                     thread::sleep(Duration::from_secs(2));
                 } else {
                     println!("Invalid selection.");
+                    printed_lines += 1;
                     thread::sleep(Duration::from_secs(2));
                 }
             } else {
                 println!("Invalid input.");
+                printed_lines += 1;
                 thread::sleep(Duration::from_secs(2));
             }
         }
-        // Refresh the view every second.
-        thread::sleep(Duration::from_secs(1));
+
+        // Update last_lines to the current count so that extra lines get cleared next iteration.
+        last_lines = printed_lines;
+        sleep(Duration::from_secs(1));
     }
 }
+
 
 /// Plays an embedded audio file in a loop while displaying a pop-up dialog.
 /// The sound continues until you dismiss the dialog.
