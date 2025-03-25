@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+rusqlite = "0.28"
 clap = { version = "4.1", features = ["derive"] }
 humantime = "2.1"
 rodio = "0.17"

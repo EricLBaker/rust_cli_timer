@@ -26,7 +26,7 @@
 - [X] Live view prints out status every second instead of replacing text in-place.
   - 💭 Foreground timer already updates in-place, should use similar approach if possible.
   - 💭 What about entering a temporary file like the interface for nano or vi so it doesn't clutter the terminal window with repeated logs?
-
+- [X] Use local SqLite DB instead of parsing and storing history in txt file
 
 ## 🔮 Roadmap
 - [ ] Create automated testing suite, so I don't have to manually test everything each time. 

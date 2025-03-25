@@ -4,12 +4,13 @@ use daemonize::Daemonize;
 use humantime::parse_duration;
 use native_dialog::MessageDialog;
 use rodio::{Decoder, OutputStream, Sink, Source};
-use std::fs::{OpenOptions, File};
-use std::io::{Write, BufRead, BufReader, Cursor, Read};
+use rusqlite::{params, Connection, Result};
 use std::thread::sleep;
 use std::time::Duration;
 use std::process;
 use libc;
+use std::io::{Write, Cursor};
+use std::io::BufRead;
 
 /// CLI timer that can either run a timer or show history or a live view of active timers.
 ///
@@ -25,7 +26,6 @@ use libc;
 #[command(author, version, about)]
 struct Args {
     /// Show the last N timer entries from history if N provided, else defaults to last 10.
-    /// If provided, no timer is run.
     #[arg(long, value_name = "HISTORY", num_args = 0..=1, default_missing_value = "10")]
     history: Option<usize>,
 
@@ -44,75 +44,102 @@ struct Args {
     fg: bool,
 }
 
-/// Returns the path to the history log file.
-/// This example uses a file in /tmp.
-fn history_log_path() -> String {
-    "/tmp/timer_cli_history.log".to_string()
+/// Returns the path to the SQLite database.
+fn db_path() -> String {
+    "/tmp/timer_cli.db".to_string()
 }
 
-/// Append a log entry for timer creation.
-/// The log format is:
-/// YYYY-MM-DD HH:MM:SS | CREATED | Duration: <duration> | Message: <message> | Foreground: <true/false>
-fn log_timer_creation(duration: &str, message: &str, fg: bool) {
+/// Initialize the database and create tables if they do not exist.
+fn init_db() -> Result<Connection> {
+    let conn = Connection::open(db_path())?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS timer_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            duration TEXT NOT NULL,
+            message TEXT,
+            fg BOOLEAN NOT NULL
+         )",
+         [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS active_timers (
+            pid INTEGER PRIMARY KEY,
+            started TEXT NOT NULL,
+            duration TEXT NOT NULL,
+            message TEXT
+         )",
+         [],
+    )?;
+    Ok(conn)
+}
+
+/// Log a timer creation into the timer_history table.
+fn log_timer_creation_db(conn: &Connection, duration: &str, message: &str, fg: bool) -> Result<()> {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let new_line = format!("{} | {:<10} | {:<20} | {}\n", timestamp, duration, message, fg);
-    let log_path = history_log_path();
-
-    // Read existing content (if any)
-    let mut old_content = String::new();
-    if let Ok(mut file) = File::open(&log_path) {
-        file.read_to_string(&mut old_content).ok();
-    }
-
-    // Write new log entry followed by old content
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&log_path)
-        .expect("Failed to open log file for writing");
-    file.write_all(new_line.as_bytes())
-        .expect("Failed to write new log line");
-    file.write_all(old_content.as_bytes())
-        .expect("Failed to write old log lines");
+    conn.execute(
+        "INSERT INTO timer_history (timestamp, duration, message, fg) VALUES (?1, ?2, ?3, ?4)",
+        params![timestamp, duration, message, fg],
+    )?;
+    Ok(())
 }
 
-/// Reads the history log file and prints the last `count` entries in a table.
-fn show_history(count: usize) {
-    let log_path = history_log_path();
-    let file = File::open(&log_path).unwrap_or_else(|_| {
-        eprintln!("No history file found.");
-        process::exit(1);
-    });
-    let reader = BufReader::new(file);
-    let lines: Vec<_> = reader.lines().filter_map(|line| line.ok()).collect();
+/// Display the last `count` entries from the timer_history table.
+fn show_history_db(count: usize) -> Result<()> {
+    let conn = init_db()?;
+    let mut stmt = conn.prepare(
+        "SELECT timestamp, duration, message, fg FROM timer_history ORDER BY id DESC LIMIT ?1"
+    )?;
+    let history_iter = stmt.query_map(params![count as i64], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, bool>(3)?,
+        ))
+    })?;
 
-    println!(
-        "{:<20} | {:<12} | {:<20} | {}",
-        "Timestamp", "Duration", "Message", "Foreground"
-    );
+    println!("{:<20} | {:<12} | {:<20} | {}", "Timestamp", "Duration", "Message", "Foreground");
     println!("{}", "-".repeat(70));
-    for line in lines.iter().take(count) {
-        println!("{}", line);
+    for entry in history_iter {
+        let (timestamp, duration, message, fg) = entry?;
+        println!("{:<20} | {:<12} | {:<20} | {}", timestamp, duration, message, fg);
     }
+    Ok(())
 }
 
-/// Registers an active timer by creating a file in /tmp/timer_cli_active.
-fn register_active_timer(duration_str: &str, message: &str) -> std::io::Result<String> {
-    let active_dir = "/tmp/timer_cli_active";
-    std::fs::create_dir_all(active_dir)?;
-    let pid = std::process::id();
-    let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    // Create an entry with timer details.
-    let entry = format!("PID: {} | Started: {} | Duration: {} | Message: {}\n", pid, now, duration_str, message);
-    let file_path = format!("{}/{}.timer", active_dir, pid);
-    std::fs::write(&file_path, entry)?;
-    Ok(file_path)
+/// Register an active timer in the active_timers table.
+fn register_active_timer_db(conn: &Connection, duration_str: &str, message: &str) -> Result<i32> {
+    let pid = std::process::id() as i32;
+    let started = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    conn.execute(
+        "INSERT OR REPLACE INTO active_timers (pid, started, duration, message) VALUES (?1, ?2, ?3, ?4)",
+        params![pid, started, duration_str, message],
+    )?;
+    Ok(pid)
 }
 
-/// Unregisters an active timer by deleting its file.
-fn unregister_active_timer(file_path: &str) {
-    let _ = std::fs::remove_file(file_path);
+/// Unregister an active timer by deleting it from the active_timers table.
+fn unregister_active_timer_db(conn: &Connection, pid: i32) -> Result<()> {
+    conn.execute("DELETE FROM active_timers WHERE pid = ?1", params![pid])?;
+    Ok(())
+}
+
+fn color(text: &str, name: &str) -> String {
+    let code = match name.to_lowercase().as_str() {
+        "red"     => 210,
+        "green"   => 151,
+        "yellow"  => 229,
+        "blue"    => 153,
+        "magenta" => 219,
+        "cyan"    => 159,
+        "orange"  => 215,
+        "purple"  => 183,
+        "pink"    => 218,
+        "gray"           => 250,
+        _ => 15, // default white
+    };
+    format!("\x1B[38;5;{}m{}\x1B[0m", code, text)
 }
 
 /// Signal handler for SIGINT to exit immediately.
@@ -120,32 +147,26 @@ extern "C" fn handle_sigint(_sig: i32) {
     process::exit(0);
 }
 
-/// Displays a live view of active timers with in-place updates.
-/// This version moves the cursor up by the previous iteration's line count
-/// and erases each line using ANSI escape codes, so that when timers expire,
-/// their output is removed cleanly.
-fn show_active_live() {
+/// Displays a live view of active timers with in-place updates using the active_timers table.
+fn show_active_live_db() -> Result<()> {
     unsafe {
         libc::signal(libc::SIGINT, handle_sigint as usize);
     }
 
+    let conn = init_db()?;
+
     use std::sync::mpsc;
-    use std::io::{self, BufRead, stdout};
+    use std::io::{self, stdout};
     use std::thread;
-    use std::time::Duration;
 
-    let active_dir = "/tmp/timer_cli_active";
-
-    // Spawn a thread to listen for user input without blocking the main loop.
+    // Spawn a thread to read user input.
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let stdin = io::stdin();
-        for line in stdin.lock().lines() {
-            if let Ok(input) = line {
-                let trimmed = input.trim().to_string();
-                if !trimmed.is_empty() {
-                    let _ = tx.send(trimmed);
-                }
+        for line in stdin.lock().lines().flatten() {
+            let trimmed = line.trim().to_string();
+            if !trimmed.is_empty() {
+                let _ = tx.send(trimmed);
             }
         }
     });
@@ -155,92 +176,64 @@ fn show_active_live() {
 
     loop {
         if !first_iteration {
-            // Move cursor up by the number of lines printed last time
+            // Move cursor up and clear previous output.
             print!("\x1B[{}A", last_lines);
-            // Clear each of those lines
             for _ in 0..last_lines {
                 print!("\x1B[2K\r\n");
             }
-            // Move cursor up again to start printing new content at the same position
             print!("\x1B[{}A", last_lines);
         }
         first_iteration = false;
         let mut printed_lines = 0;
 
-        // Print header.
         println!("Active Timers:");
         printed_lines += 1;
         println!("{}", "-".repeat(70));
         printed_lines += 1;
 
-        // Gather and sort active timer files.
-        let mut active_files = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(active_dir) {
-            for entry in entries.flatten() {
-                active_files.push(entry.path());
-            }
-        }
-        active_files.sort();
+        // Query active timers from the DB.
+        let mut stmt = conn.prepare("SELECT pid, started, duration, message FROM active_timers ORDER BY pid")?;
+        let active_iter = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i32>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
 
-        // Display each active timer.
-        for (index, path) in active_files.iter().enumerate() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let parts: Vec<&str> = content.split(" | ").collect();
-                if parts.len() < 4 {
-                    println!("{}: {}", index + 1, content.trim());
-                    printed_lines += 1;
-                    continue;
-                }
-                let pid_part = parts[0].trim();
-                let started_part = parts[1].trim();
-                let duration_part = parts[2].trim();
-                let message_part = parts[3].trim();
-                let start_str = started_part.strip_prefix("Started: ").unwrap_or("");
-                let duration_str = duration_part.strip_prefix("Duration: ").unwrap_or("");
-                let message = message_part.strip_prefix("Message: ").unwrap_or("");
-                if let Ok(start_time) =
-                    chrono::NaiveDateTime::parse_from_str(start_str, "%Y-%m-%d %H:%M:%S")
-                {
-                    let start_time: chrono::DateTime<chrono::Local> =
-                        chrono::Local.from_local_datetime(&start_time).unwrap();
-                    if let Ok(dur) = humantime::parse_duration(duration_str) {
-                        let end_time = start_time + chrono::Duration::from_std(dur).unwrap();
-                        let now = chrono::Local::now();
-                        let time_left = end_time - now;
-                        if time_left.num_seconds() <= 0 {
-                            let _ = std::fs::remove_file(&path);
-                            continue;
-                        }
-                        let secs = time_left.num_seconds();
-                        let hours = secs / 3600;
-                        let minutes = (secs % 3600) / 60;
-                        let seconds = secs % 60;
-                        let time_left_str = format!(
-                            "\x1B[32m{:02}:{:02}:{:02}\x1B[0m",
-                            hours, minutes, seconds
-                        );
-                        println!(
-                            "{}: {} | Started: {} | Duration: {} | Message: {} | Time Left: {}",
-                            index + 1,
-                            pid_part,
-                            start_str,
-                            duration_str,
-                            message,
-                            time_left_str
-                        );
-                        printed_lines += 1;
-                    } else {
-                        println!("{}: {}", index + 1, content.trim());
-                        printed_lines += 1;
+        let mut active_timers = Vec::new();
+        for timer in active_iter {
+            active_timers.push(timer?);
+        }
+
+        // Display each active timer and compute remaining time.
+        for (index, (pid, started, duration_str, message)) in active_timers.iter().enumerate() {
+            if let Ok(start_time) = chrono::NaiveDateTime::parse_from_str(&started, "%Y-%m-%d %H:%M:%S") {
+                let start_time: chrono::DateTime<chrono::Local> =
+                    chrono::Local.from_local_datetime(&start_time).unwrap();
+                if let Ok(dur) = parse_duration(&duration_str) {
+                    let end_time = start_time + chrono::Duration::from_std(dur).unwrap();
+                    let now = chrono::Local::now();
+                    let time_left = end_time - now;
+                    if time_left.num_seconds() <= 0 {
+                        let _ = conn.execute("DELETE FROM active_timers WHERE pid = ?1", params![pid]);
+                        continue;
                     }
-                } else {
-                    println!("{}: {}", index + 1, content.trim());
+                    let secs = time_left.num_seconds();
+                    let hours = secs / 3600;
+                    let minutes = (secs % 3600) / 60;
+                    let seconds = secs % 60;
+                    let time_left_str = format!("\x1B[32m{:02}:{:02}:{:02} \x1B[0m", hours, minutes, seconds);
+                    println!(
+                        "{}: PID: {} | Started: {} | Duration: {} | Message: {} | Time Left: {}",
+                        index + 1, color(&pid.to_string(), "red"), color(started, "purple"), color(duration_str, "blue"), color(message, "green"), time_left_str
+                    );
                     printed_lines += 1;
                 }
             }
         }
 
-        // Print a blank line and prompt.
         println!();
         printed_lines += 1;
         println!("Enter number to kill and press enter (or Ctrl+C to exit): ");
@@ -248,89 +241,60 @@ fn show_active_live() {
 
         stdout().flush().unwrap();
 
-        // Process user input if available.
+        // Process user input.
         if let Ok(input) = rx.try_recv() {
             if let Ok(num) = input.parse::<usize>() {
-                if num > 0 && num <= active_files.len() {
-                    let path = &active_files[num - 1];
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        let parts: Vec<&str> = content.split(" | ").collect();
-                        if !parts.is_empty() {
-                            if let Some(pid_str) = parts[0].strip_prefix("PID: ") {
-                                if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                                    unsafe {
-                                        libc::kill(pid, libc::SIGTERM);
-                                    }
-                                    println!("Killed timer with PID {}", pid);
-                                    printed_lines += 1;
-                                }
-                            }
-                        }
+                if num > 0 && num <= active_timers.len() {
+                    // Borrow the tuple so we don't move it.
+                    let (pid, _started, _duration_str, _message) = &active_timers[num - 1];
+                    unsafe {
+                        libc::kill(*pid, libc::SIGTERM);
                     }
-                    let _ = std::fs::remove_file(&path);
-                    thread::sleep(Duration::from_secs(2));
+                    println!("Killed timer with PID {}", pid);
+                    printed_lines += 1;
+                    let _ = conn.execute("DELETE FROM active_timers WHERE pid = ?1", params![pid]);
+                    sleep(Duration::from_secs(2));
                 } else {
                     println!("Invalid selection.");
                     printed_lines += 1;
-                    thread::sleep(Duration::from_secs(2));
+                    sleep(Duration::from_secs(2));
                 }
             } else {
                 println!("Invalid input.");
                 printed_lines += 1;
-                thread::sleep(Duration::from_secs(2));
+                sleep(Duration::from_secs(2));
             }
         }
 
-        // Update last_lines to the current count so that extra lines get cleared next iteration.
         last_lines = printed_lines;
         sleep(Duration::from_secs(1));
     }
 }
 
-
-/// Plays an embedded audio file in a loop while displaying a pop-up dialog.
-/// The sound continues until you dismiss the dialog.
-///
-/// NOTE: The current dialog uses native_dialog, which does not support custom images.
-/// To change the image at the top of the timer's pop-up, consider using a different GUI library.
+/// Plays an embedded audio file in a loop while showing a pop-up dialog.
 fn play_sound_with_dialog(popup_title: &str) {
-    // Include the sound file at compile time.
     let audio_data: &[u8] = include_bytes!("../sounds/calm-loop-80576.mp3");
     let cursor = Cursor::new(audio_data);
-
-    // Initialize the audio output.
     let (_stream, stream_handle) =
         OutputStream::try_default().expect("No audio output device available");
     let sink = Sink::try_new(&stream_handle).expect("Failed to create audio sink");
-
-    // Create a source that repeats indefinitely.
     let source = Decoder::new(cursor)
         .expect("Failed to decode audio")
         .repeat_infinite();
-
-    // Append the looping source to the sink.
     sink.append(source);
-
-    // Show a pop-up dialog.
     MessageDialog::new()
         .set_title(popup_title)
         .set_text("⌛")
         .show_alert()
         .unwrap();
-
-    // Stop the audio when the dialog is dismissed.
     sink.stop();
 }
 
-/// Runs the timer, optionally with a live countdown (if `live` is true).
-/// Logs the timer event immediately when the timer completes (before the popup).
-/// Runs the timer, optionally with a live countdown (if `live` is true).
+/// Runs the timer, optionally with a live countdown (if live is true).
 fn run_timer(duration: Duration, popup_message: String, live: bool) {
     if live {
         let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        // Convert duration to milliseconds.
         let total_millis = duration.as_secs() * 1000;
-        // Update every 100ms.
         let update_interval = 100;
         let total_ticks = total_millis / update_interval;
         for tick in (0..=total_ticks).rev() {
@@ -356,19 +320,17 @@ fn run_timer(duration: Duration, popup_message: String, live: bool) {
 fn main() {
     let args = Args::parse();
 
-    // If history flag is provided, show history and exit.
+    // Process history or live flags first.
     if let Some(count) = args.history {
-        show_history(count);
+        show_history_db(count).unwrap();
         return;
     }
-
-    // If live flag is provided, show the active timers live view and exit.
     if args.live {
-        show_active_live();
+        show_active_live_db().unwrap();
         return;
     }
 
-    // Otherwise, we expect a duration.
+    // Timer mode: duration is required.
     let duration_str = args.duration.unwrap_or_else(|| {
         eprintln!("Duration string required unless using --history or --live");
         process::exit(1);
@@ -382,7 +344,6 @@ fn main() {
         }
     };
 
-    // Prepare the popup message.
     let popup_message = match &args.message {
         Some(m) => m.clone(),
         None => "Time's up!".to_string(),
@@ -390,30 +351,21 @@ fn main() {
 
     println!("Starting timer for {} seconds...", duration.as_secs());
 
-    // For foreground mode, log creation and run the timer normally.
+    // If running in foreground, use the existing connection.
     if args.fg {
-        // Log timer creation only once upon submission.
-        log_timer_creation(&duration_str, &popup_message, true);
+        let conn = init_db().expect("Failed to initialize database");
+        log_timer_creation_db(&conn, &duration_str, &popup_message, true).unwrap();
         run_timer(duration, popup_message.clone(), true);
     } else {
-        let daemonize = Daemonize::new()
-            .working_directory(".")
-            .umask(0o027);
+        // Background mode: daemonize first and then open a new DB connection.
+        let daemonize = Daemonize::new().working_directory(".").umask(0o027);
         match daemonize.start() {
             Ok(_) => {
-                let active_file = match register_active_timer(&duration_str, &popup_message) {
-                    Ok(path) => path,
-                    Err(e) => {
-                        eprintln!("Error registering active timer: {}", e);
-                        process::exit(1);
-                    }
-                };
-
-                // Log timer creation for background timers.
-                log_timer_creation(&duration_str, &popup_message, false);
-
+                let conn = init_db().expect("Failed to initialize database after daemonizing");
+                let pid = register_active_timer_db(&conn, &duration_str, &popup_message).unwrap();
+                log_timer_creation_db(&conn, &duration_str, &popup_message, false).unwrap();
                 run_timer(duration, popup_message.clone(), false);
-                unregister_active_timer(&active_file);
+                unregister_active_timer_db(&conn, pid).unwrap();
             }
             Err(e) => {
                 eprintln!("Error daemonizing: {}", e);
