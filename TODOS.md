@@ -3,29 +3,38 @@
 ---
 
 ## ⚙️ Features
+- [X] Add --live view for active timers
+- [X] Add --history view for previous timers
+- [X] Add kill option to live view to stop timers
+- [X] Add timer restart button (and including time that it will be restarted for) 
+- [X] Add timer snooze button (with drop-down if possible? Or set default in config)
+- [X] Optionally: When killing tasks, keep their number assigned instead of shifting
+  - e.g. when killing task 1 currently, task 2 then becomes 1. So if you kill 1 then 2, 2 is not found
+- [ ] Add local (system time) parsing (e.g. 4:30pm)
+- [ ] Add support for timezone datetime parsing (e.g. 4:30pm EST, PST, etc.)
+  - ideal behavior: kill 1, then kill 2
 - [ ] Add killall command so users don't have to stop a bunch of timers individually
-  - [ ] Optionally: When killing tasks, keep their number assigned instead of shifting
-    - e.g. when killing task 1 currently, task 2 then becomes 1. So if you kill 1 then 2, 2 is not found
-    - ideal behavior: kill 1, then kill 2 
 - [ ] Add user config yaml somewhere in system that can be updated via a settings command
-- [ ] Add timer restart button (and including time that it will be restarted for) 
-- [ ] Add timer snooze button (with drop-down if possible? Or set default in config)
 - [ ] Config-based features
   - [ ] disable pop up on timer end
-  - [ ] don't loop timer
+  - [ ] don't loop timer endlessly (set timer ring length, e.g. stop after 10s)
   - [ ] change default timer message when left empty
 
 
 ## 🐞 Bugs
-- [ ] ...
+- [X] Starting 2 timers at once currently
 
 
-## 🏎️ Performance Improvements
-- [X] More graceful exit from `tt --live`.
-  - 💭 Currently, takes multiple `ctrl + C` calls to exit and it's slow/clunky.
+## 🏆 Nice-to-haves
+- [X] Clean up the design of the pop-up window, buttons, etc.
 - [X] Live view prints out status every second instead of replacing text in-place.
   - 💭 Foreground timer already updates in-place, should use similar approach if possible.
   - 💭 What about entering a temporary file like the interface for nano or vi so it doesn't clutter the terminal window with repeated logs?
+
+
+## 🚀 Performance Improvements
+- [X] More graceful exit from `tt --live`.
+  - 💭 Currently, takes multiple `ctrl + C` calls to exit and it's slow/clunky.
 - [X] Use local SqLite DB instead of parsing and storing history in txt file
 
 ## 🔮 Roadmap

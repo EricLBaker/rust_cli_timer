@@ -1,18 +1,34 @@
 use clap::Parser;
 use chrono::{Local, TimeZone};
 use daemonize::Daemonize;
-use humantime::parse_duration;
-use native_dialog::MessageDialog;
+use humantime::{parse_duration};
 use rodio::{Decoder, OutputStream, Sink, Source};
 use rusqlite::{params, Connection, Result};
 use std::thread::sleep;
 use std::time::Duration;
 use std::process;
 use libc;
-use std::io::{Write, Cursor};
-use std::io::BufRead;
+use std::io::{Write, Cursor, BufRead};
+use std::process::Command;
+use eframe::{egui, App};
 
-/// CLI timer that can either run a timer or show history or a live view of active timers.
+/// Returns the snooze duration and the original string from the SNOOZE_TIME environment variable.
+/// If SNOOZE_TIME is not set or cannot be parsed, it defaults to 5 minutes ("5m").
+fn get_snooze_duration_and_str() -> (Duration, String) {
+    if let Ok(s) = std::env::var("SNOOZE_TIME") {
+        if let Ok(dur) = parse_duration(&s) {
+            (dur, s)
+        } else {
+            let default = Duration::from_secs_f64(5.0 * 60.0);
+            (default, "5m".to_string())
+        }
+    } else {
+        let default = Duration::from_secs_f64(5.0 * 60.0);
+        (default, "5m".to_string())
+    }
+}
+
+/// CLI timer that can either run a timer, show history, or a live view of active timers.
 ///
 /// Run a timer with:
 ///   timer_cli [--fg] <duration> [message]
@@ -25,7 +41,7 @@ use std::io::BufRead;
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
-    /// Show the last N timer entries from history if N provided, else defaults to last 10.
+    /// Show the last N timer entries from history if provided (defaults to 10)
     #[arg(long, value_name = "HISTORY", num_args = 0..=1, default_missing_value = "10")]
     history: Option<usize>,
 
@@ -33,7 +49,7 @@ struct Args {
     #[arg(long)]
     live: bool,
 
-    /// Duration string (e.g., "2s", "1min 30 seconds"). Required if not using --history or --live.
+    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --history or --live.
     duration: Option<String>,
 
     /// Optional message to include in the alarm popup.
@@ -50,6 +66,9 @@ fn db_path() -> String {
 }
 
 /// Initialize the database and create tables if they do not exist.
+///
+/// The active_timers table uses an autoincrement primary key (id)
+/// and stores the process id (pid) separately.
 fn init_db() -> Result<Connection> {
     let conn = Connection::open(db_path())?;
     conn.execute(
@@ -64,7 +83,8 @@ fn init_db() -> Result<Connection> {
     )?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS active_timers (
-            pid INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pid INTEGER,
             started TEXT NOT NULL,
             duration TEXT NOT NULL,
             message TEXT
@@ -108,20 +128,21 @@ fn show_history_db(count: usize) -> Result<()> {
     Ok(())
 }
 
-/// Register an active timer in the active_timers table.
-fn register_active_timer_db(conn: &Connection, duration_str: &str, message: &str) -> Result<i32> {
-    let pid = std::process::id() as i32;
+/// Inserts a new active timer record into active_timers.
+/// Returns the newly inserted record’s id.
+fn register_active_timer_db(conn: &Connection, duration_str: &str, message: &str) -> Result<i64> {
+    let pid = process::id() as i32;
     let started = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     conn.execute(
-        "INSERT OR REPLACE INTO active_timers (pid, started, duration, message) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO active_timers (pid, started, duration, message) VALUES (?1, ?2, ?3, ?4)",
         params![pid, started, duration_str, message],
     )?;
-    Ok(pid)
+    Ok(conn.last_insert_rowid())
 }
 
-/// Unregister an active timer by deleting it from the active_timers table.
-fn unregister_active_timer_db(conn: &Connection, pid: i32) -> Result<()> {
-    conn.execute("DELETE FROM active_timers WHERE pid = ?1", params![pid])?;
+/// Unregister an active timer by deleting it from the active_timers table, given its record id.
+fn unregister_active_timer_db(conn: &Connection, active_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM active_timers WHERE id = ?1", params![active_id])?;
     Ok(())
 }
 
@@ -136,8 +157,8 @@ fn color(text: &str, name: &str) -> String {
         "orange"  => 215,
         "purple"  => 183,
         "pink"    => 218,
-        "gray"           => 250,
-        _ => 15, // default white
+        "gray"    => 250,
+        _ => 15,
     };
     format!("\x1B[38;5;{}m{}\x1B[0m", code, text)
 }
@@ -147,19 +168,16 @@ extern "C" fn handle_sigint(_sig: i32) {
     process::exit(0);
 }
 
-/// Displays a live view of active timers with in-place updates using the active_timers table.
+/// Displays a live view of active timers using the active_timers table.
+/// Rows are keyed by an autoincrement id.
 fn show_active_live_db() -> Result<()> {
     unsafe {
         libc::signal(libc::SIGINT, handle_sigint as usize);
     }
-
     let conn = init_db()?;
-
     use std::sync::mpsc;
     use std::io::{self, stdout};
     use std::thread;
-
-    // Spawn a thread to read user input.
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let stdin = io::stdin();
@@ -170,13 +188,10 @@ fn show_active_live_db() -> Result<()> {
             }
         }
     });
-
     let mut first_iteration = true;
     let mut last_lines = 0;
-
     loop {
         if !first_iteration {
-            // Move cursor up and clear previous output.
             print!("\x1B[{}A", last_lines);
             for _ in 0..last_lines {
                 print!("\x1B[2K\r\n");
@@ -185,30 +200,29 @@ fn show_active_live_db() -> Result<()> {
         }
         first_iteration = false;
         let mut printed_lines = 0;
-
         println!("Active Timers:");
         printed_lines += 1;
         println!("{}", "-".repeat(70));
         printed_lines += 1;
 
         // Query active timers from the DB.
-        let mut stmt = conn.prepare("SELECT pid, started, duration, message FROM active_timers ORDER BY pid")?;
+        let mut stmt = conn.prepare("SELECT id, pid, started, duration, message FROM active_timers ORDER BY id")?;
         let active_iter = stmt.query_map([], |row| {
             Ok((
-                row.get::<_, i32>(0)?,
-                row.get::<_, String>(1)?,
+                row.get::<_, i64>(0)?,
+                row.get::<_, i32>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
             ))
         })?;
-
         let mut active_timers = Vec::new();
         for timer in active_iter {
             active_timers.push(timer?);
         }
 
         // Display each active timer and compute remaining time.
-        for (index, (pid, started, duration_str, message)) in active_timers.iter().enumerate() {
+        for (index, (id, pid, started, duration_str, message)) in active_timers.iter().enumerate() {
             if let Ok(start_time) = chrono::NaiveDateTime::parse_from_str(&started, "%Y-%m-%d %H:%M:%S") {
                 let start_time: chrono::DateTime<chrono::Local> =
                     chrono::Local.from_local_datetime(&start_time).unwrap();
@@ -217,7 +231,7 @@ fn show_active_live_db() -> Result<()> {
                     let now = chrono::Local::now();
                     let time_left = end_time - now;
                     if time_left.num_seconds() <= 0 {
-                        let _ = conn.execute("DELETE FROM active_timers WHERE pid = ?1", params![pid]);
+                        let _ = conn.execute("DELETE FROM active_timers WHERE id = ?1", params![id]);
                         continue;
                     }
                     let secs = time_left.num_seconds();
@@ -226,36 +240,42 @@ fn show_active_live_db() -> Result<()> {
                     let seconds = secs % 60;
                     let time_left_str = format!("\x1B[32m{:02}:{:02}:{:02} \x1B[0m", hours, minutes, seconds);
                     println!(
-                        "{}: PID: {} | Started: {} | Duration: {} | Message: {} | Time Left: {}",
-                        index + 1, color(&pid.to_string(), "red"), color(started, "purple"), color(duration_str, "blue"), color(message, "green"), time_left_str
+                        "{}: [ID: {} | PID: {}] | Started: {} | Duration: {} | Message: {} | Time Left: {}",
+                        index + 1,
+                        id,
+                        pid,
+                        color(started, "purple"),
+                        color(duration_str, "blue"),
+                        color(message, "green"),
+                        time_left_str
                     );
                     printed_lines += 1;
                 }
             }
         }
-
         println!();
         printed_lines += 1;
-        println!("Enter number to kill and press enter (or Ctrl+C to exit): ");
+        println!("Enter active timer ID to kill and press enter (or Ctrl+C to exit): ");
         printed_lines += 1;
 
         stdout().flush().unwrap();
 
         // Process user input.
         if let Ok(input) = rx.try_recv() {
-            if let Ok(num) = input.parse::<usize>() {
-                if num > 0 && num <= active_timers.len() {
-                    // Borrow the tuple so we don't move it.
-                    let (pid, _started, _duration_str, _message) = &active_timers[num - 1];
+            if let Ok(active_id) = input.parse::<i64>() {
+                let mut stmt = conn.prepare("SELECT pid FROM active_timers WHERE id = ?1")?;
+                let mut rows = stmt.query(params![active_id])?;
+                if let Some(row) = rows.next()? {
+                    let pid: i32 = row.get(0)?;
                     unsafe {
-                        libc::kill(*pid, libc::SIGTERM);
+                        libc::kill(pid, libc::SIGTERM);
                     }
                     println!("Killed timer with PID {}", pid);
                     printed_lines += 1;
-                    let _ = conn.execute("DELETE FROM active_timers WHERE pid = ?1", params![pid]);
+                    let _ = conn.execute("DELETE FROM active_timers WHERE id = ?1", params![active_id]);
                     sleep(Duration::from_secs(2));
                 } else {
-                    println!("Invalid selection.");
+                    println!("No active timer with that ID.");
                     printed_lines += 1;
                     sleep(Duration::from_secs(2));
                 }
@@ -265,62 +285,200 @@ fn show_active_live_db() -> Result<()> {
                 sleep(Duration::from_secs(2));
             }
         }
-
         last_lines = printed_lines;
         sleep(Duration::from_secs(1));
     }
 }
 
-/// Plays an embedded audio file in a loop while showing a pop-up dialog.
-fn play_sound_with_dialog(popup_title: &str) {
+/// Plays a looping sound and returns both the OutputStream and Sink.
+fn play_sound_loop() -> (OutputStream, Sink) {
     let audio_data: &[u8] = include_bytes!("../sounds/calm-loop-80576.mp3");
     let cursor = Cursor::new(audio_data);
-    let (_stream, stream_handle) =
-        OutputStream::try_default().expect("No audio output device available");
-    let sink = Sink::try_new(&stream_handle).expect("Failed to create audio sink");
-    let source = Decoder::new(cursor)
-        .expect("Failed to decode audio")
-        .repeat_infinite();
+    let (stream, stream_handle) = OutputStream::try_default().expect("No audio output device");
+    let sink = Sink::try_new(&stream_handle).expect("Failed to create sink");
+    let source = Decoder::new(cursor).expect("Failed to decode").repeat_infinite();
     sink.append(source);
-    MessageDialog::new()
-        .set_title(popup_title)
-        .set_text("⌛")
-        .show_alert()
-        .unwrap();
-    sink.stop();
+    (stream, sink)
 }
 
-/// Runs the timer, optionally with a live countdown (if live is true).
-fn run_timer(duration: Duration, popup_message: String, live: bool) {
-    if live {
-        let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let total_millis = duration.as_secs() * 1000;
-        let update_interval = 100;
-        let total_ticks = total_millis / update_interval;
-        for tick in (0..=total_ticks).rev() {
-            let remaining_millis = tick * update_interval;
-            let seconds_remaining = remaining_millis / 1000;
-            let hours = seconds_remaining / 3600;
-            let minutes = (seconds_remaining % 3600) / 60;
-            let seconds = seconds_remaining % 60;
-            let spinner = spinner_chars[(tick as usize) % spinner_chars.len()];
-            print!("\r\x1B[32mTime remaining: {:02}:{:02}:{:02} {} \x1B[0m", hours, minutes, seconds, spinner);
-            std::io::stdout().flush().unwrap();
-            sleep(Duration::from_millis(update_interval));
-        }
-        println!();
-    } else {
-        sleep(duration);
-    }
+/// Enum for the timer actions.
+#[derive(PartialEq)]
+pub enum TimerAction {
+    Snooze,
+    Restart,
+    Stop,
+}
 
-    println!("Time's up!");
-    play_sound_with_dialog(&popup_message);
+/// Struct for the GUI popup.
+pub struct TimerPopup {
+    pub sender: Option<std::sync::mpsc::Sender<TimerAction>>,
+    pub message: String,
+}
+
+/// Implement the eframe App for TimerPopup with custom styling.
+/// This version centers the window and buttons and auto-sizes to its content.
+/// The window title is set to an empty string so that the custom message is shown at the top.
+impl App for TimerPopup {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        egui::Window::new("Time's Up!")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    // Display the custom message at the top.
+                    ui.label(&self.message);
+                    ui.add_space(20.0);
+                    let (_snooze_duration, snooze_str) = get_snooze_duration_and_str();
+                    // Include the snooze time in the button label.
+                    if ui.add_sized(egui::vec2(120.0, 40.0), egui::Button::new(format!("Snooze ({})", snooze_str))).clicked() {
+                        if let Some(s) = self.sender.take() {
+                            let _ = s.send(TimerAction::Snooze);
+                        }
+                        frame.close();
+                    }
+                    ui.add_space(10.0);
+                    if ui.add_sized(egui::vec2(120.0, 40.0), egui::Button::new("Restart")).clicked() {
+                        if let Some(s) = self.sender.take() {
+                            let _ = s.send(TimerAction::Restart);
+                        }
+                        frame.close();
+                    }
+                    ui.add_space(10.0);
+                    if ui.add_sized(egui::vec2(120.0, 40.0), egui::Button::new("Stop")).clicked() {
+                        if let Some(s) = self.sender.take() {
+                            let _ = s.send(TimerAction::Stop);
+                        }
+                        frame.close();
+                    }
+                    ui.add_space(20.0);
+                });
+            });
+    }
+}
+
+/// In popup mode, run the GUI popup and print the action to stdout.
+fn run_popup() {
+    let args: Vec<String> = std::env::args().collect();
+    let message = if let Some(pos) = args.iter().position(|a| a == "--message") {
+        if pos + 1 < args.len() {
+            args[pos + 1].clone()
+        } else {
+            "Time's up!".to_string()
+        }
+    } else {
+        "Time's up!".to_string()
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let app = TimerPopup { sender: Some(tx), message };
+    let native_options = eframe::NativeOptions {
+        initial_window_size: Some(egui::vec2(400.0, 300.0)),
+        resizable: false,
+        ..Default::default()
+    };
+    // Use a fixed window title "Terminal Timer"
+    eframe::run_native("Terminal Timer",
+        native_options,
+        Box::new(move |_cc| Box::new(app))
+    );
+    let action = rx.recv().unwrap_or(TimerAction::Stop);
+    match action {
+        TimerAction::Snooze => println!("snooze"),
+        TimerAction::Restart => println!("restart"),
+        TimerAction::Stop => println!("stop"),
+    }
+}
+
+/// Spawns a separate process to show the popup and returns the chosen action.
+/// This sets the environment variable "POPUP_MODE" so the child runs popup mode.
+fn spawn_popup(popup_message: &str) -> TimerAction {
+    let current_exe = std::env::current_exe().expect("Failed to get current executable");
+    let output = Command::new(current_exe)
+        .env("POPUP_MODE", "1")
+        .arg("--message")
+        .arg(popup_message)
+        .output()
+        .expect("Failed to spawn popup process");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    match stdout.trim() {
+        "snooze" => TimerAction::Snooze,
+        "restart" => TimerAction::Restart,
+        _ => TimerAction::Stop,
+    }
+}
+
+/// Runs the timer. When time's up, it plays the sound and spawns a separate popup process.
+/// Depending on the chosen action, it deletes the old active timer record and inserts a new one.
+/// Durations are stored using the original formatting string.
+fn run_timer(mut duration: Duration, original_duration_str: String, popup_message: String, live: bool) {
+    let conn = init_db().expect("Failed to initialize DB");
+    // Insert the initial active timer record using the original duration string.
+    let mut active_timer_id = register_active_timer_db(&conn, &original_duration_str, &popup_message)
+        .expect("Failed to register active timer");
+
+    loop {
+        if live {
+            let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let total_millis = duration.as_secs() * 1000;
+            let update_interval = 100;
+            let total_ticks = total_millis / update_interval;
+            for tick in (0..=total_ticks).rev() {
+                let remaining_millis = tick * update_interval;
+                let seconds_remaining = remaining_millis / 1000;
+                let hours = seconds_remaining / 3600;
+                let minutes = (seconds_remaining % 3600) / 60;
+                let seconds = seconds_remaining % 60;
+                let spinner = spinner_chars[(tick as usize) % spinner_chars.len()];
+                print!("\r\x1B[32mTime remaining: {:02}:{:02}:{:02} {} \x1B[0m", hours, minutes, seconds, spinner);
+                std::io::stdout().flush().unwrap();
+                sleep(Duration::from_millis(update_interval));
+            }
+            println!();
+        } else {
+            sleep(duration);
+        }
+        println!("Time's up!");
+        let (_stream, sink) = play_sound_loop();
+        let action = spawn_popup(&popup_message);
+        sink.stop();
+        match action {
+            TimerAction::Snooze => {
+                let (snooze_duration, snooze_str) = get_snooze_duration_and_str();
+                let new_message = format!("(Snoozed) {}", popup_message);
+                unregister_active_timer_db(&conn, active_timer_id).unwrap();
+                active_timer_id = register_active_timer_db(&conn, &snooze_str, &new_message)
+                    .expect("Failed to register snoozed timer");
+                log_timer_creation_db(&conn, &snooze_str, &new_message, false).unwrap();
+                println!("Snoozing for {}...", snooze_str);
+                duration = snooze_duration;
+                continue;
+            },
+            TimerAction::Restart => {
+                let new_message = format!("(Restarted) {}", popup_message);
+                unregister_active_timer_db(&conn, active_timer_id).unwrap();
+                active_timer_id = register_active_timer_db(&conn, &original_duration_str, &new_message)
+                    .expect("Failed to register restarted timer");
+                log_timer_creation_db(&conn, &original_duration_str, &new_message, false).unwrap();
+                println!("Restarting timer...");
+                duration = parse_duration(&original_duration_str).unwrap();
+                continue;
+            },
+            TimerAction::Stop => {
+                println!("Stopping timer.");
+                unregister_active_timer_db(&conn, active_timer_id).unwrap();
+                break;
+            },
+        }
+    }
 }
 
 fn main() {
+    // If the environment variable POPUP_MODE is set, run popup mode.
+    if std::env::var("POPUP_MODE").unwrap_or_default() == "1" {
+        run_popup();
+        return;
+    }
     let args = Args::parse();
-
-    // Process history or live flags first.
     if let Some(count) = args.history {
         show_history_db(count).unwrap();
         return;
@@ -329,13 +487,10 @@ fn main() {
         show_active_live_db().unwrap();
         return;
     }
-
-    // Timer mode: duration is required.
     let duration_str = args.duration.unwrap_or_else(|| {
         eprintln!("Duration string required unless using --history or --live");
         process::exit(1);
     });
-
     let duration = match parse_duration(&duration_str) {
         Ok(d) => d,
         Err(e) => {
@@ -343,29 +498,22 @@ fn main() {
             process::exit(1);
         }
     };
-
-    let popup_message = match &args.message {
-        Some(m) => m.clone(),
-        None => "Time's up!".to_string(),
-    };
-
-    println!("Starting timer for {} seconds...", duration.as_secs());
+    let popup_message = args.message.unwrap_or_else(|| "Time's up!".to_string());
+    println!("Starting timer for {}...", duration_str);
 
     // If running in foreground, use the existing connection.
     if args.fg {
         let conn = init_db().expect("Failed to initialize database");
         log_timer_creation_db(&conn, &duration_str, &popup_message, true).unwrap();
-        run_timer(duration, popup_message.clone(), true);
+        run_timer(duration, duration_str, popup_message.clone(), true);
     } else {
         // Background mode: daemonize first and then open a new DB connection.
         let daemonize = Daemonize::new().working_directory(".").umask(0o027);
         match daemonize.start() {
             Ok(_) => {
                 let conn = init_db().expect("Failed to initialize database after daemonizing");
-                let pid = register_active_timer_db(&conn, &duration_str, &popup_message).unwrap();
                 log_timer_creation_db(&conn, &duration_str, &popup_message, false).unwrap();
-                run_timer(duration, popup_message.clone(), false);
-                unregister_active_timer_db(&conn, pid).unwrap();
+                run_timer(duration, duration_str, popup_message.clone(), false);
             }
             Err(e) => {
                 eprintln!("Error daemonizing: {}", e);
