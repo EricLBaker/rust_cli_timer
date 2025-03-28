@@ -11,6 +11,36 @@ use libc;
 use std::io::{Write, Cursor, BufRead};
 use std::process::Command;
 use eframe::{egui, App};
+use egui::{Color32, FontId, RichText, TextFormat, WidgetText};
+use egui::text::LayoutJob;
+
+fn styled_button_label(shortcut: &str, color: Color32, label: &str) -> WidgetText {
+    let mut job = LayoutJob::default();
+
+    // Style the shortcut portion, e.g. "[ z ]"
+    job.append(
+        shortcut,
+        0.0,
+        TextFormat {
+            font_id: FontId::proportional(16.0),
+            color,
+            ..Default::default()
+        },
+    );
+
+    // Style the rest of the label normally
+    job.append(
+        label,
+        0.0,
+        TextFormat {
+            font_id: FontId::proportional(16.0),
+            color: Color32::WHITE,
+            ..Default::default()
+        },
+    );
+
+    WidgetText::from(job)
+}
 
 /// Returns the snooze duration and the original string from the SNOOZE_TIME environment variable.
 /// If SNOOZE_TIME is not set or cannot be parsed, it defaults to 5 minutes ("5m").
@@ -106,6 +136,8 @@ fn log_timer_creation_db(conn: &Connection, duration: &str, message: &str, fg: b
 
 /// Display the last `count` entries from the timer_log table.
 fn show_log_db(count: usize) -> Result<()> {
+    use textwrap::{fill, Options};
+
     let conn = init_db()?;
     let mut stmt = conn.prepare(
         "SELECT timestamp, duration, message, fg FROM timer_log ORDER BY id DESC LIMIT ?1"
@@ -119,11 +151,59 @@ fn show_log_db(count: usize) -> Result<()> {
         ))
     })?;
 
-    println!("{:<20} | {:<12} | {:<20} | {}", "Timestamp", "Duration", "Message", "Foreground");
-    println!("{}", "-".repeat(70));
+    // Set maximum column widths
+    let timestamp_width = 20;
+    let duration_width = 12;
+    let message_width = 40;
+
+    println!(
+        "{:<timestamp_width$} | {:<duration_width$} | {:<message_width$} | {}",
+        "Timestamp",
+        "Duration",
+        "Message",
+        "Foreground",
+        timestamp_width = timestamp_width,
+        duration_width = duration_width,
+        message_width = message_width
+    );
+    println!("{}", "-".repeat(timestamp_width + duration_width + message_width + 20));
+
     for entry in log_iter {
         let (timestamp, duration, message, fg) = entry?;
-        println!("{:<20} | {:<12} | {:<20} | {}", timestamp, duration, message, fg);
+        // Wrap the duration and message to the desired widths
+        let wrapped_duration = fill(&duration, Options::new(duration_width));
+        let wrapped_message = fill(&message, Options::new(message_width));
+
+        // Split wrapped text into lines so we can print multiple lines if needed.
+        let duration_lines: Vec<&str> = wrapped_duration.lines().collect();
+        let message_lines: Vec<&str> = wrapped_message.lines().collect();
+        let num_lines = duration_lines.len().max(message_lines.len()).max(1);
+
+        // Print first line with timestamp and foreground flag
+        println!(
+            "{:<timestamp_width$} | {:<duration_width$} | {:<message_width$} | {}",
+            timestamp,
+            duration_lines.get(0).unwrap_or(&""),
+            message_lines.get(0).unwrap_or(&""),
+            fg,
+            timestamp_width = timestamp_width,
+            duration_width = duration_width,
+            message_width = message_width,
+        );
+
+        // For additional wrapped lines, print empty strings for timestamp and foreground columns.
+        for i in 1..num_lines {
+            println!(
+                "{:<timestamp_width$} | {:<duration_width$} | {:<message_width$} | {}",
+                "",
+                duration_lines.get(i).unwrap_or(&""),
+                message_lines.get(i).unwrap_or(&""),
+                "",
+                timestamp_width = timestamp_width,
+                duration_width = duration_width,
+                message_width = message_width,
+            );
+        }
     }
     Ok(())
 }
@@ -200,9 +280,9 @@ fn show_active_live_db() -> Result<()> {
         }
         first_iteration = false;
         let mut printed_lines = 0;
-        println!("Active Timers:");
+        println!("{}", color("Active Timers:", "gray"));
         printed_lines += 1;
-        println!("{}", "-".repeat(70));
+        println!("{}", "-".repeat(100));
         printed_lines += 1;
 
         // Query active timers from the DB.
@@ -243,9 +323,9 @@ fn show_active_live_db() -> Result<()> {
                         "ID: {} [PID: {}] | Started: {} | Duration: {} | Message: {} | Time Left: {}",
                         color(&id.to_string(), "red"),
                         pid,
-                        color(started, "purple"),
-                        color(duration_str, "blue"),
-                        color(message, "pink"),
+                        color(started, "blue"),
+                        color(duration_str, "pink"),
+                        color(message, "purple"),
                         time_left_str
                     );
                     printed_lines += 1;
@@ -254,9 +334,8 @@ fn show_active_live_db() -> Result<()> {
         }
         println!();
         printed_lines += 1;
-        println!("{}", color("Enter 'all' or specific ID to kill timers", "gray"));
-        println!("{}", color("( Ctrl+C to exit )", "blue"));
-        printed_lines += 2;
+        println!("{} {}", color("Type an ID to kill, or 'all'", "gray"), color("[ Ctrl+C to exit ]", "gray"));
+        printed_lines += 1;
 
         stdout().flush().unwrap();
 
@@ -334,40 +413,65 @@ pub struct TimerPopup {
 /// The window title is set to an empty string so that the custom message is shown at the top.
 impl App for TimerPopup {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        egui::Window::new("Time's Up!")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    // Display the custom message at the top.
-                    ui.label(&self.message);
-                    ui.add_space(20.0);
-                    let (_snooze_duration, snooze_str) = get_snooze_duration_and_str();
-                    // Include the snooze time in the button label.
-                    if ui.add_sized(egui::vec2(120.0, 40.0), egui::Button::new(format!("Snooze ({})", snooze_str))).clicked() {
+        if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
+            if let Some(s) = self.sender.take() {
+                let _ = s.send(TimerAction::Snooze);
+            }
+            frame.close();
+        } else if ctx.input(|i| i.key_pressed(egui::Key::R)) {
+            if let Some(s) = self.sender.take() {
+                let _ = s.send(TimerAction::Restart);
+            }
+            frame.close();
+        } else if ctx.input(|i| i.key_pressed(egui::Key::X)) {
+            if let Some(s) = self.sender.take() {
+                let _ = s.send(TimerAction::Stop);
+            }
+            frame.close();
+        }
+
+    egui::Window::new("Time's Up!")
+        .collapsible(false)
+        .resizable(true)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            // Full width
+            ui.set_min_width(ui.available_width());
+
+            ui.vertical_centered(|ui| {
+                if self.message.len() > 0 {
+                    ui.add_space(25.0);
+                }
+                ui.colored_label(egui::Color32::LIGHT_GREEN, &self.message);
+                ui.add_space(20.0);
+
+                let (_snooze_duration, snooze_str) = get_snooze_duration_and_str();
+                let buttons = [
+                    (
+                        styled_button_label("[ z ] ", Color32::from_rgb(128, 128, 255), &format!("Snooze ({})", snooze_str)),
+                        TimerAction::Snooze,
+                    ),
+                    (
+                        styled_button_label("[ r ] ", Color32::from_rgb(0, 255, 128), "Restart"),
+                        TimerAction::Restart,
+                    ),
+                    (
+                        styled_button_label("[ x ] ", Color32::from_rgb(255, 0, 0), "Stop"),
+                        TimerAction::Stop,
+                    ),
+                ];
+
+                for (label, action) in buttons {
+                    if ui.add_sized(egui::vec2(150.0, 40.0), egui::Button::new(label)).clicked() {
                         if let Some(s) = self.sender.take() {
-                            let _ = s.send(TimerAction::Snooze);
+                            let _ = s.send(action);
                         }
                         frame.close();
                     }
-                    ui.add_space(10.0);
-                    if ui.add_sized(egui::vec2(120.0, 40.0), egui::Button::new("Restart")).clicked() {
-                        if let Some(s) = self.sender.take() {
-                            let _ = s.send(TimerAction::Restart);
-                        }
-                        frame.close();
-                    }
-                    ui.add_space(10.0);
-                    if ui.add_sized(egui::vec2(120.0, 40.0), egui::Button::new("Stop")).clicked() {
-                        if let Some(s) = self.sender.take() {
-                            let _ = s.send(TimerAction::Stop);
-                        }
-                        frame.close();
-                    }
-                    ui.add_space(20.0);
-                });
+                    ui.add_space(25.0);
+                }
             });
+        });
     }
 }
 
@@ -378,16 +482,16 @@ fn run_popup() {
         if pos + 1 < args.len() {
             args[pos + 1].clone()
         } else {
-            "Time's up!".to_string()
+            "".to_string()
         }
     } else {
-        "Time's up!".to_string()
+        "".to_string()
     };
     let (tx, rx) = std::sync::mpsc::channel();
     let app = TimerPopup { sender: Some(tx), message };
     let native_options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(400.0, 300.0)),
-        resizable: false,
+        initial_window_size: Some(egui::vec2(400.0, 350.0)),
+        resizable: true,
         ..Default::default()
     };
     // Use a fixed window title "Terminal Timer"
@@ -512,7 +616,7 @@ fn main() {
             process::exit(1);
         }
     };
-    let popup_message = args.message.unwrap_or_else(|| "Time's up!".to_string());
+    let popup_message = args.message.unwrap_or_else(|| "".to_string());
     println!("Starting timer for {}...", duration_str);
 
     // If running in foreground, use the existing connection.
