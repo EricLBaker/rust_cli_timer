@@ -10,10 +10,10 @@
 - [X] Add timer snooze button (with drop-down if possible? Or set default in config)
 - [X] Optionally: When killing tasks, keep their number assigned instead of shifting
   - e.g. when killing task 1 currently, task 2 then becomes 1. So if you kill 1 then 2, 2 is not found
+- [X] Add killall command so users don't have to stop a bunch of timers individually
 - [ ] Add local (system time) parsing (e.g. 4:30pm)
 - [ ] Add support for timezone datetime parsing (e.g. 4:30pm EST, PST, etc.)
   - ideal behavior: kill 1, then kill 2
-- [ ] Add killall command so users don't have to stop a bunch of timers individually
 - [ ] Add user config yaml somewhere in system that can be updated via a settings command
 - [ ] Config-based features
   - [ ] disable pop up on timer end

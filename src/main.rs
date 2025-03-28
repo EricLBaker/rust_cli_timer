@@ -28,28 +28,28 @@ fn get_snooze_duration_and_str() -> (Duration, String) {
     }
 }
 
-/// CLI timer that can either run a timer, show history, or a live view of active timers.
+/// CLI timer that can either run a timer, show log, or a live view of active timers.
 ///
 /// Run a timer with:
 ///   timer_cli [--fg] <duration> [message]
 ///
-/// Show history with:
-///   timer_cli --history [COUNT]
+/// Show log with:
+///   timer_cli --log [COUNT]
 ///
 /// Show live view with:
 ///   timer_cli --live
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
-    /// Show the last N timer entries from history if provided (defaults to 10)
-    #[arg(long, value_name = "HISTORY", num_args = 0..=1, default_missing_value = "10")]
-    history: Option<usize>,
+    /// Show the last N timer entries from log if provided (defaults to 10)
+    #[arg(long, value_name = "LOG", num_args = 0..=1, default_missing_value = "10")]
+    log: Option<usize>,
 
     /// Show a live view of active timers.
     #[arg(long)]
     live: bool,
 
-    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --history or --live.
+    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --log or --live.
     duration: Option<String>,
 
     /// Optional message to include in the alarm popup.
@@ -72,7 +72,7 @@ fn db_path() -> String {
 fn init_db() -> Result<Connection> {
     let conn = Connection::open(db_path())?;
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS timer_history (
+        "CREATE TABLE IF NOT EXISTS timer_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
             duration TEXT NOT NULL,
@@ -94,23 +94,23 @@ fn init_db() -> Result<Connection> {
     Ok(conn)
 }
 
-/// Log a timer creation into the timer_history table.
+/// Log a timer creation into the timer_log table.
 fn log_timer_creation_db(conn: &Connection, duration: &str, message: &str, fg: bool) -> Result<()> {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     conn.execute(
-        "INSERT INTO timer_history (timestamp, duration, message, fg) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO timer_log (timestamp, duration, message, fg) VALUES (?1, ?2, ?3, ?4)",
         params![timestamp, duration, message, fg],
     )?;
     Ok(())
 }
 
-/// Display the last `count` entries from the timer_history table.
-fn show_history_db(count: usize) -> Result<()> {
+/// Display the last `count` entries from the timer_log table.
+fn show_log_db(count: usize) -> Result<()> {
     let conn = init_db()?;
     let mut stmt = conn.prepare(
-        "SELECT timestamp, duration, message, fg FROM timer_history ORDER BY id DESC LIMIT ?1"
+        "SELECT timestamp, duration, message, fg FROM timer_log ORDER BY id DESC LIMIT ?1"
     )?;
-    let history_iter = stmt.query_map(params![count as i64], |row| {
+    let log_iter = stmt.query_map(params![count as i64], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
@@ -121,7 +121,7 @@ fn show_history_db(count: usize) -> Result<()> {
 
     println!("{:<20} | {:<12} | {:<20} | {}", "Timestamp", "Duration", "Message", "Foreground");
     println!("{}", "-".repeat(70));
-    for entry in history_iter {
+    for entry in log_iter {
         let (timestamp, duration, message, fg) = entry?;
         println!("{:<20} | {:<12} | {:<20} | {}", timestamp, duration, message, fg);
     }
@@ -222,7 +222,7 @@ fn show_active_live_db() -> Result<()> {
         }
 
         // Display each active timer and compute remaining time.
-        for (index, (id, pid, started, duration_str, message)) in active_timers.iter().enumerate() {
+        for (id, pid, started, duration_str, message) in active_timers.iter() {
             if let Ok(start_time) = chrono::NaiveDateTime::parse_from_str(&started, "%Y-%m-%d %H:%M:%S") {
                 let start_time: chrono::DateTime<chrono::Local> =
                     chrono::Local.from_local_datetime(&start_time).unwrap();
@@ -240,13 +240,12 @@ fn show_active_live_db() -> Result<()> {
                     let seconds = secs % 60;
                     let time_left_str = format!("\x1B[32m{:02}:{:02}:{:02} \x1B[0m", hours, minutes, seconds);
                     println!(
-                        "{}: [ID: {} | PID: {}] | Started: {} | Duration: {} | Message: {} | Time Left: {}",
-                        index + 1,
-                        id,
+                        "ID: {} [PID: {}] | Started: {} | Duration: {} | Message: {} | Time Left: {}",
+                        color(&id.to_string(), "red"),
                         pid,
                         color(started, "purple"),
                         color(duration_str, "blue"),
-                        color(message, "green"),
+                        color(message, "pink"),
                         time_left_str
                     );
                     printed_lines += 1;
@@ -255,14 +254,29 @@ fn show_active_live_db() -> Result<()> {
         }
         println!();
         printed_lines += 1;
-        println!("Enter active timer ID to kill and press enter (or Ctrl+C to exit): ");
-        printed_lines += 1;
+        println!("{}", color("Enter 'all' or specific ID to kill timers", "gray"));
+        println!("{}", color("( Ctrl+C to exit )", "blue"));
+        printed_lines += 2;
 
         stdout().flush().unwrap();
 
         // Process user input.
         if let Ok(input) = rx.try_recv() {
-            if let Ok(active_id) = input.parse::<i64>() {
+            if input.eq_ignore_ascii_case("all") {
+                let mut stmt = conn.prepare("SELECT pid FROM active_timers")?;
+                let mut rows = stmt.query([])?;
+                while let Some(row) = rows.next()? {
+                    let pid: i32 = row.get(0)?;
+                    unsafe {
+                        libc::kill(pid, libc::SIGTERM);
+                    }
+                }
+                conn.execute("DELETE FROM active_timers", [])?;
+                println!("Killed all active timers.");
+                printed_lines += 2;
+                sleep(Duration::from_secs(2));
+            }
+            else if let Ok(active_id) = input.parse::<i64>() {
                 let mut stmt = conn.prepare("SELECT pid FROM active_timers WHERE id = ?1")?;
                 let mut rows = stmt.query(params![active_id])?;
                 if let Some(row) = rows.next()? {
@@ -271,17 +285,17 @@ fn show_active_live_db() -> Result<()> {
                         libc::kill(pid, libc::SIGTERM);
                     }
                     println!("Killed timer with PID {}", pid);
-                    printed_lines += 1;
+                    printed_lines += 2;
                     let _ = conn.execute("DELETE FROM active_timers WHERE id = ?1", params![active_id]);
                     sleep(Duration::from_secs(2));
                 } else {
                     println!("No active timer with that ID.");
-                    printed_lines += 1;
+                    printed_lines += 2;
                     sleep(Duration::from_secs(2));
                 }
             } else {
                 println!("Invalid input.");
-                printed_lines += 1;
+                printed_lines += 2;
                 sleep(Duration::from_secs(2));
             }
         }
@@ -377,7 +391,7 @@ fn run_popup() {
         ..Default::default()
     };
     // Use a fixed window title "Terminal Timer"
-    eframe::run_native("Terminal Timer",
+    let _ = eframe::run_native("Terminal Timer",
         native_options,
         Box::new(move |_cc| Box::new(app))
     );
@@ -479,8 +493,8 @@ fn main() {
         return;
     }
     let args = Args::parse();
-    if let Some(count) = args.history {
-        show_history_db(count).unwrap();
+    if let Some(count) = args.log {
+        show_log_db(count).unwrap();
         return;
     }
     if args.live {
@@ -488,7 +502,7 @@ fn main() {
         return;
     }
     let duration_str = args.duration.unwrap_or_else(|| {
-        eprintln!("Duration string required unless using --history or --live");
+        eprintln!("Duration string required unless using --log or --live");
         process::exit(1);
     });
     let duration = match parse_duration(&duration_str) {
