@@ -34,14 +34,13 @@
 - [X] Improve formatting of `--log` for consistent col width
 - [X] Make shortcuts less verbose and add color (e.g. [r] Restart)
 - [ ] Improve formatting of `--live` for consistent col width
-- [ ] Left-align pop-up buttons
 
 
 ## 🚀 Performance Improvements
 - [X] More graceful exit from `tt --live`.
   - 💭 Currently, takes multiple `ctrl + C` calls to exit and it's slow/clunky.
 - [X] Use local SqLite DB instead of parsing and storing history in txt file
-
+- [ ] Quicker update to live view when killing 1 or more tasks. Currently, takes 1-2 seconds before they disappear.
 
 ## 🔮 Roadmap
 - [ ] Create automated testing suite, so I don't have to manually test everything each time. 
@@ -49,5 +48,3 @@
 - [ ] Create brew package / installation.
 - [ ] Release to GitHub to allow open-source contributions.
 - [ ] Add to `scrapple.io`
-- [ ]
-Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.Create automated testing suite, so I don't have to manually test everything each time.
