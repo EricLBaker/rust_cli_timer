@@ -3,8 +3,8 @@
 ---
 
 ## ⚙️ Features
-- [X] Add --live view for active timers
-- [X] Add --log view for previous timers
+- [X] Add --view (live view) for active timers
+- [X] Add --history view for previous timers
 - [X] Add kill option to live view to stop timers
 - [X] Add timer restart button (and including time that it will be restarted for) 
 - [X] Add timer snooze button (with drop-down if possible? Or set default in config)
@@ -31,13 +31,14 @@
 - [X] Live view prints out status every second instead of replacing text in-place.
   - 💭 Foreground timer already updates in-place, should use similar approach if possible.
   - 💭 What about entering a temporary file like the interface for nano or vi so it doesn't clutter the terminal window with repeated logs?
-- [X] Improve formatting of `--log` for consistent col width
+- [X] Improve formatting of `--history` for consistent col width
 - [X] Make shortcuts less verbose and add color (e.g. [r] Restart)
-- [ ] Improve formatting of `--live` for consistent col width
+- [X] Shorthand versions of each command (e.g. -v for live view, -h for )
+- [ ] Improve formatting of `--view` for consistent col width
 
 
 ## 🚀 Performance Improvements
-- [X] More graceful exit from `tt --live`.
+- [X] More graceful exit from `tt --view`.
   - 💭 Currently, takes multiple `ctrl + C` calls to exit and it's slow/clunky.
 - [X] Use local SqLite DB instead of parsing and storing history in txt file
 - [ ] Quicker update to live view when killing 1 or more tasks. Currently, takes 1-2 seconds before they disappear.

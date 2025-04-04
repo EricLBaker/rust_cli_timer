@@ -58,28 +58,28 @@ fn get_snooze_duration_and_str() -> (Duration, String) {
     }
 }
 
-/// CLI timer that can either run a timer, show log, or a live view of active timers.
+/// CLI timer that can either run a timer, show history, or a live view of active timers.
 ///
 /// Run a timer with:
 ///   timer_cli [--fg] <duration> [message]
 ///
-/// Show log with:
-///   timer_cli --log [COUNT]
+/// Show history with:
+///   timer_cli --history [COUNT] or timer_cli -h [COUNT]
 ///
 /// Show live view with:
-///   timer_cli --live
+///   timer_cli --view or timer_cli -v
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
-    /// Show the last N timer entries from log if provided (defaults to 10)
-    #[arg(long, value_name = "LOG", num_args = 0..=1, default_missing_value = "10")]
-    log: Option<usize>,
+    /// Show the last N timer entries from history if provided (defaults to 10)
+    #[arg(short='h', long, value_name = "HISTORY", num_args = 0..=1, default_missing_value = "10")]
+    history: Option<usize>,
 
     /// Show a live view of active timers.
-    #[arg(long)]
-    live: bool,
+    #[arg(short='v', long)]
+    view: bool,
 
-    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --log or --live.
+    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --history or --view.
     duration: Option<String>,
 
     /// Optional message to include in the alarm popup.
@@ -102,7 +102,7 @@ fn db_path() -> String {
 fn init_db() -> Result<Connection> {
     let conn = Connection::open(db_path())?;
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS timer_log (
+        "CREATE TABLE IF NOT EXISTS timer_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
             duration TEXT NOT NULL,
@@ -124,25 +124,25 @@ fn init_db() -> Result<Connection> {
     Ok(conn)
 }
 
-/// Log a timer creation into the timer_log table.
+/// Log a timer creation into the timer_history table.
 fn log_timer_creation_db(conn: &Connection, duration: &str, message: &str, fg: bool) -> Result<()> {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     conn.execute(
-        "INSERT INTO timer_log (timestamp, duration, message, fg) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO timer_history (timestamp, duration, message, fg) VALUES (?1, ?2, ?3, ?4)",
         params![timestamp, duration, message, fg],
     )?;
     Ok(())
 }
 
-/// Display the last `count` entries from the timer_log table.
-fn show_log_db(count: usize) -> Result<()> {
+/// Display the last `count` entries from the timer_history table.
+fn show_history_db(count: usize) -> Result<()> {
     use textwrap::{fill, Options};
 
     let conn = init_db()?;
     let mut stmt = conn.prepare(
-        "SELECT timestamp, duration, message, fg FROM timer_log ORDER BY id DESC LIMIT ?1"
+        "SELECT timestamp, duration, message, fg FROM timer_history ORDER BY id DESC LIMIT ?1"
     )?;
-    let log_iter = stmt.query_map(params![count as i64], |row| {
+    let history_iter = stmt.query_map(params![count as i64], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
@@ -168,7 +168,7 @@ fn show_log_db(count: usize) -> Result<()> {
     );
     println!("{}", "-".repeat(timestamp_width + duration_width + message_width + 20));
 
-    for entry in log_iter {
+    for entry in history_iter {
         let (timestamp, duration, message, fg) = entry?;
         // Wrap the duration and message to the desired widths
         let wrapped_duration = fill(&duration, Options::new(duration_width));
@@ -250,7 +250,7 @@ extern "C" fn handle_sigint(_sig: i32) {
 
 /// Displays a live view of active timers using the active_timers table.
 /// Rows are keyed by an autoincrement id.
-fn show_active_live_db() -> Result<()> {
+fn show_active_timer_db() -> Result<()> {
     unsafe {
         libc::signal(libc::SIGINT, handle_sigint as usize);
     }
@@ -528,14 +528,14 @@ fn spawn_popup(popup_message: &str) -> TimerAction {
 /// Runs the timer. When time's up, it plays the sound and spawns a separate popup process.
 /// Depending on the chosen action, it deletes the old active timer record and inserts a new one.
 /// Durations are stored using the original formatting string.
-fn run_timer(mut duration: Duration, original_duration_str: String, popup_message: String, live: bool) {
+fn run_timer(mut duration: Duration, original_duration_str: String, popup_message: String, view: bool) {
     let conn = init_db().expect("Failed to initialize DB");
     // Insert the initial active timer record using the original duration string.
     let mut active_timer_id = register_active_timer_db(&conn, &original_duration_str, &popup_message)
         .expect("Failed to register active timer");
 
     loop {
-        if live {
+        if view {
             let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let total_millis = duration.as_secs() * 1000;
             let update_interval = 100;
@@ -597,16 +597,16 @@ fn main() {
         return;
     }
     let args = Args::parse();
-    if let Some(count) = args.log {
-        show_log_db(count).unwrap();
+    if let Some(count) = args.history {
+        show_history_db(count).unwrap();
         return;
     }
-    if args.live {
-        show_active_live_db().unwrap();
+    if args.view {
+        show_active_timer_db().unwrap();
         return;
     }
     let duration_str = args.duration.unwrap_or_else(|| {
-        eprintln!("Duration string required unless using --log or --live");
+        eprintln!("Duration string required unless using --history or --view");
         process::exit(1);
     });
     let duration = match parse_duration(&duration_str) {
