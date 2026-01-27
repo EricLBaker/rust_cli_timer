@@ -90,8 +90,8 @@ fn get_snooze_duration_and_str() -> (Duration, String) {
 /// Show history with:
 ///   timer_cli --history [COUNT] or timer_cli -h [COUNT]
 ///
-/// Show live view with:
-///   timer_cli --view or timer_cli -v
+/// Show active timers with:
+///   timer_cli --active or timer_cli -a
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
@@ -100,10 +100,10 @@ struct Args {
     history: Option<usize>,
 
     /// Show a live view of active timers.
-    #[arg(short='v', long)]
-    view: bool,
+    #[arg(short='a', long)]
+    active: bool,
 
-    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --history or --view.
+    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --history or --active.
     duration: Option<String>,
 
     /// Optional message to include in the alarm popup.
@@ -469,7 +469,7 @@ impl App for TimerPopup {
                 let _ = s.send(TimerAction::Restart);
             }
             frame.close();
-        } else if ctx.input(|i| i.key_pressed(egui::Key::X)) {
+        } else if ctx.input(|i| i.key_pressed(egui::Key::S) || i.key_pressed(egui::Key::Escape)) {
             if let Some(s) = self.sender.take() {
                 let _ = s.send(TimerAction::Stop);
             }
@@ -488,7 +488,7 @@ impl App for TimerPopup {
                 if self.message.len() > 0 {
                     ui.add_space(25.0);
                 }
-                ui.colored_label(egui::Color32::LIGHT_GREEN, &self.message);
+                ui.colored_label(egui::Color32::LIGHT_GREEN, format!("\"{}\"", &self.message));
                 ui.add_space(20.0);
 
                 let (_snooze_duration, snooze_str) = get_snooze_duration_and_str();
@@ -502,7 +502,7 @@ impl App for TimerPopup {
                         TimerAction::Restart,
                     ),
                     (
-                        styled_button_label("[ x ] ", Color32::from_rgb(255, 0, 0), "Stop"),
+                        styled_button_label("[ s ] ", Color32::from_rgb(255, 0, 0), "Stop"),
                         TimerAction::Stop,
                     ),
                 ];
@@ -574,14 +574,14 @@ fn spawn_popup(popup_message: &str) -> TimerAction {
 /// Runs the timer. When time's up, it plays the sound and spawns a separate popup process.
 /// Depending on the chosen action, it deletes the old active timer record and inserts a new one.
 /// Durations are stored using the original formatting string.
-fn run_timer(mut duration: Duration, original_duration_str: String, popup_message: String, view: bool) {
+fn run_timer(mut duration: Duration, original_duration_str: String, popup_message: String, show_progress: bool) {
     let conn = init_db().expect("Failed to initialize DB");
     // Insert the initial active timer record using the original duration string.
     let mut active_timer_id = register_active_timer_db(&conn, &original_duration_str, &popup_message)
         .expect("Failed to register active timer");
 
     loop {
-        if view {
+        if show_progress {
             let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let total_millis = duration.as_secs() * 1000;
             let update_interval = 100;
@@ -647,12 +647,12 @@ fn main() {
         show_history_db(count).unwrap();
         return;
     }
-    if args.view {
+    if args.active {
         show_active_timer_db().unwrap();
         return;
     }
     let duration_str = args.duration.unwrap_or_else(|| {
-        eprintln!("Duration string required unless using --history or --view");
+        eprintln!("Duration string required unless using --history (-h) or --active (-a)");
         process::exit(1);
     });
     let duration = match parse_duration(&duration_str) {
