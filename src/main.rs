@@ -557,12 +557,19 @@ fn run_popup() {
 /// This sets the environment variable "POPUP_MODE" so the child runs popup mode.
 fn spawn_popup(popup_message: &str) -> TimerAction {
     let current_exe = std::env::current_exe().expect("Failed to get current executable");
-    let output = Command::new(current_exe)
-        .env("POPUP_MODE", "1")
+    let mut cmd = Command::new(current_exe);
+    cmd.env("POPUP_MODE", "1")
         .arg("--message")
-        .arg(popup_message)
-        .output()
-        .expect("Failed to spawn popup process");
+        .arg(popup_message);
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    
+    let output = cmd.output().expect("Failed to spawn popup process");
     let stdout = String::from_utf8_lossy(&output.stdout);
     match stdout.trim() {
         "snooze" => TimerAction::Snooze,
