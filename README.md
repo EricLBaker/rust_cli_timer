@@ -15,7 +15,7 @@ Timer CLI is a lightweight command-line tool written in Rust that lets you set t
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (with Cargo)
+- [Rust](https://rustup.rs/) (Cargo)
 
 ### Build the Project
 
@@ -114,7 +114,7 @@ YYYY-MM-DD HH:MM:SS | Duration: <duration> | Message: <message> | Background: <t
 
 ## Custom Notification Image
 
-*Note:* Timer CLI currently uses `native_dialog` for its pop-up notifications, which does not support changing the image at the top of the dialog. To display a custom image, consider using a more advanced GUI library (e.g., GTK or egui) and update the code accordingly.
+*Note:* Timer CLI currently uses `native_dialog` for its pop-up notifications, which does not support changing the image at the top of the dialog.
 
 ## License
 

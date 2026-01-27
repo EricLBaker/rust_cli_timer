@@ -1,18 +1,42 @@
 use clap::Parser;
 use chrono::{Local, TimeZone};
-use daemonize::Daemonize;
 use humantime::{parse_duration};
 use rodio::{Decoder, OutputStream, Sink, Source};
 use rusqlite::{params, Connection, Result};
 use std::thread::sleep;
 use std::time::Duration;
 use std::process;
-use libc;
 use std::io::{Write, Cursor, BufRead};
 use std::process::Command;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use eframe::{egui, App};
-use egui::{Color32, FontId, RichText, TextFormat, WidgetText};
+use egui::{Color32, FontId, TextFormat, WidgetText};
 use egui::text::LayoutJob;
+
+/// Cross-platform process termination
+fn kill_process(pid: i32) {
+    #[cfg(unix)]
+    {
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+    #[cfg(windows)]
+    {
+        unsafe {
+            let handle = windows_sys::Win32::System::Threading::OpenProcess(
+                windows_sys::Win32::System::Threading::PROCESS_TERMINATE,
+                0,
+                pid as u32,
+            );
+            if handle != 0 {
+                windows_sys::Win32::System::Threading::TerminateProcess(handle, 1);
+                windows_sys::Win32::Foundation::CloseHandle(handle);
+            }
+        }
+    }
+}
 
 fn styled_button_label(shortcut: &str, color: Color32, label: &str) -> WidgetText {
     let mut job = LayoutJob::default();
@@ -88,11 +112,22 @@ struct Args {
     /// Run timer in foreground.
     #[arg(short, long, default_value_t = false)]
     fg: bool,
+
+    /// Internal flag: indicates this process was spawned as a background child (hidden from help).
+    #[arg(long, hide = true, default_value_t = false)]
+    background_child: bool,
 }
 
 /// Returns the path to the SQLite database.
 fn db_path() -> String {
-    "/tmp/timer_cli.db".to_string()
+    if cfg!(windows) {
+        let temp = std::env::var("TEMP")
+            .or_else(|_| std::env::var("TMP"))
+            .unwrap_or_else(|_| ".".to_string());
+        format!("{}\\timer_cli.db", temp)
+    } else {
+        "/tmp/timer_cli.db".to_string()
+    }
 }
 
 /// Initialize the database and create tables if they do not exist.
@@ -244,15 +279,30 @@ fn color(text: &str, name: &str) -> String {
 }
 
 /// Signal handler for SIGINT to exit immediately.
+#[cfg(unix)]
 extern "C" fn handle_sigint(_sig: i32) {
     process::exit(0);
+}
+
+/// Windows console control handler for Ctrl+C
+#[cfg(windows)]
+unsafe extern "system" fn handle_ctrl_c(ctrl_type: u32) -> i32 {
+    if ctrl_type == windows_sys::Win32::System::Console::CTRL_C_EVENT {
+        process::exit(0);
+    }
+    0
 }
 
 /// Displays a live view of active timers using the active_timers table.
 /// Rows are keyed by an autoincrement id.
 fn show_active_timer_db() -> Result<()> {
+    #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGINT, handle_sigint as usize);
+    }
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(handle_ctrl_c), 1);
     }
     let conn = init_db()?;
     use std::sync::mpsc;
@@ -346,9 +396,7 @@ fn show_active_timer_db() -> Result<()> {
                 let mut rows = stmt.query([])?;
                 while let Some(row) = rows.next()? {
                     let pid: i32 = row.get(0)?;
-                    unsafe {
-                        libc::kill(pid, libc::SIGTERM);
-                    }
+                    kill_process(pid);
                 }
                 conn.execute("DELETE FROM active_timers", [])?;
                 println!("Killed all active timers.");
@@ -360,9 +408,7 @@ fn show_active_timer_db() -> Result<()> {
                 let mut rows = stmt.query(params![active_id])?;
                 if let Some(row) = rows.next()? {
                     let pid: i32 = row.get(0)?;
-                    unsafe {
-                        libc::kill(pid, libc::SIGTERM);
-                    }
+                    kill_process(pid);
                     println!("Killed timer with PID {}", pid);
                     printed_lines += 2;
                     let _ = conn.execute("DELETE FROM active_timers WHERE id = ?1", params![active_id]);
@@ -620,21 +666,35 @@ fn main() {
     println!("Starting timer for {}...", duration_str);
 
     // If running in foreground, use the existing connection.
-    if args.fg {
+    if args.fg || args.background_child {
         let conn = init_db().expect("Failed to initialize database");
-        log_timer_creation_db(&conn, &duration_str, &popup_message, true).unwrap();
-        run_timer(duration, duration_str, popup_message.clone(), true);
+        log_timer_creation_db(&conn, &duration_str, &popup_message, args.fg).unwrap();
+        run_timer(duration, duration_str, popup_message.clone(), args.fg);
     } else {
-        // Background mode: daemonize first and then open a new DB connection.
-        let daemonize = Daemonize::new().working_directory(".").umask(0o027);
-        match daemonize.start() {
+        // Background mode: spawn a detached child process (cross-platform)
+        let exe = std::env::current_exe().expect("Failed to get current executable path");
+        let mut cmd = Command::new(exe);
+        cmd.arg(&duration_str)
+           .arg("--background-child");
+        
+        if !popup_message.is_empty() {
+            cmd.arg(&popup_message);
+        }
+
+        // On Windows, hide the console window
+        #[cfg(windows)]
+        let cmd = {
+            const DETACHED_PROCESS: u32 = 0x00000008;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+        };
+
+        match cmd.spawn() {
             Ok(_) => {
-                let conn = init_db().expect("Failed to initialize database after daemonizing");
-                log_timer_creation_db(&conn, &duration_str, &popup_message, false).unwrap();
-                run_timer(duration, duration_str, popup_message.clone(), false);
+                println!("Timer started in background.");
             }
             Err(e) => {
-                eprintln!("Error daemonizing: {}", e);
+                eprintln!("Error spawning background process: {}", e);
                 process::exit(1);
             }
         }
