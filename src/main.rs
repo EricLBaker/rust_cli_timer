@@ -1,7 +1,6 @@
 use clap::Parser;
 use chrono::{Local, TimeZone};
 use humantime::{parse_duration};
-use rodio::{Decoder, OutputStream, Sink, Source};
 use rusqlite::{params, Connection, Result};
 use std::thread::sleep;
 use std::time::Duration;
@@ -429,15 +428,42 @@ fn show_active_timer_db() -> Result<()> {
     }
 }
 
-/// Plays a looping sound and returns both the OutputStream and Sink.
-fn play_sound_loop() -> (OutputStream, Sink) {
-    let audio_data: &[u8] = include_bytes!("../sounds/calm-loop-80576.mp3");
-    let cursor = Cursor::new(audio_data);
-    let (stream, stream_handle) = OutputStream::try_default().expect("No audio output device");
-    let sink = Sink::try_new(&stream_handle).expect("Failed to create sink");
-    let source = Decoder::new(cursor).expect("Failed to decode").repeat_infinite();
-    sink.append(source);
-    (stream, sink)
+/// Audio support - available on macOS/Windows by default, or on Linux with "audio" feature
+#[cfg(any(not(target_os = "linux"), feature = "audio"))]
+mod audio {
+    use rodio::{Decoder, OutputStream, Sink, Source};
+    use std::io::Cursor;
+
+    /// Plays a looping sound and returns both the OutputStream and Sink.
+    pub fn play_sound_loop() -> (OutputStream, Sink) {
+        let audio_data: &[u8] = include_bytes!("../sounds/calm-loop-80576.mp3");
+        let cursor = Cursor::new(audio_data);
+        let (stream, stream_handle) = OutputStream::try_default().expect("No audio output device");
+        let sink = Sink::try_new(&stream_handle).expect("Failed to create sink");
+        let source = Decoder::new(cursor).expect("Failed to decode").repeat_infinite();
+        sink.append(source);
+        (stream, sink)
+    }
+}
+
+/// Fallback for Linux without audio feature - uses system bell
+#[cfg(all(target_os = "linux", not(feature = "audio")))]
+mod audio {
+    /// Dummy struct to match the API
+    pub struct DummyStream;
+    pub struct DummySink;
+    
+    impl DummySink {
+        pub fn stop(&self) {}
+    }
+
+    /// Plays a system bell as fallback (no audio library available)
+    pub fn play_sound_loop() -> (DummyStream, DummySink) {
+        // Print bell character to trigger system notification sound
+        print!("\x07");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        (DummyStream, DummySink)
+    }
 }
 
 /// Enum for the timer actions.
@@ -609,7 +635,7 @@ fn run_timer(mut duration: Duration, original_duration_str: String, popup_messag
             sleep(duration);
         }
         println!("Time's up!");
-        let (_stream, sink) = play_sound_loop();
+        let (_stream, sink) = audio::play_sound_loop();
         let action = spawn_popup(&popup_message);
         sink.stop();
         match action {

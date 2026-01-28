@@ -9,9 +9,19 @@ eframe = "0.21"
 rusqlite = { version = "0.28", features = ["bundled"] }
 clap = { version = "4.1", features = ["derive"] }
 humantime = "2.1"
-rodio = "0.17"
 native-dialog = "0.7.0"
 chrono = "0.4"
+
+# Audio support: enabled by default on macOS/Windows, optional on Linux
+# Linux users can enable with: cargo build --features audio (requires libasound2-dev)
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+rodio = "0.17"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rodio = { version = "0.17", optional = true }
+
+[features]
+audio = []
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
