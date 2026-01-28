@@ -2,6 +2,14 @@
 
 Timer CLI is a lightweight command-line tool written in Rust that lets you set timers with custom durations and messages. When a timer finishes, a pop-up notification appears with your message and a looping sound is played. Timer events are logged to a history file for later review.
 
+## Supported Platforms
+
+| Platform                         | Status             | Audio Support |
+| -------------------------------- | ------------------ | ------------- |
+| 🍎 macOS (Intel & Apple Silicon) | ✅ Fully supported | ✅ Built-in   |
+| 🪟 Windows                       | ✅ Fully supported | ✅ Built-in   |
+| 🐧 Linux                         | ✅ Fully supported | ✅ Built-in   |
+
 ## Features
 
 - **Custom Duration:** Specify durations (e.g., `2s`, `1min 30s`) for your timers.
@@ -13,44 +21,24 @@ Timer CLI is a lightweight command-line tool written in Rust that lets you set t
 
 ## Installation
 
-### Prerequisites
+### Quick Install (Recommended)
 
-- [Rust](https://rustup.rs/) (Cargo)
+**macOS / Linux:**
 
-### Build the Project
+```bash
+curl -sSf https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | sh
+```
 
-Clone the repository and navigate into the project folder:
+**Windows:**
+Download `timer_cli-windows-x86_64.exe` from the [Releases page](https://github.com/EricLBaker/rust_cli_timer/releases) and add it to your PATH.
+
+### Install from Source
+
+Requires [Rust](https://rustup.rs/):
 
 ```bash
 git clone <repository_url>
 cd timer_cli
-```
-
-Build the project in release mode:
-
-```bash
-cargo build --release
-```
-
-The binary is generated at `target/release/timer_cli`.
-
-### Global Installation Options
-
-#### Option 1: Copy the Binary to Your PATH
-
-Copy the binary into a directory in your PATH (e.g., `/usr/local/bin`):
-
-```bash
-sudo cp target/release/timer_cli /usr/local/bin/
-```
-
-Now you can run `timer_cli` from anywhere.
-
-#### Option 2: Use Cargo Install
-
-Alternatively, install the tool globally with Cargo:
-
-```bash
 cargo install --path .
 ```
 
