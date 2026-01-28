@@ -1,18 +1,42 @@
 use clap::Parser;
 use chrono::{Local, TimeZone};
-use daemonize::Daemonize;
 use humantime::{parse_duration};
 use rodio::{Decoder, OutputStream, Sink, Source};
 use rusqlite::{params, Connection, Result};
 use std::thread::sleep;
 use std::time::Duration;
 use std::process;
-use libc;
 use std::io::{Write, Cursor, BufRead};
 use std::process::Command;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use eframe::{egui, App};
-use egui::{Color32, FontId, RichText, TextFormat, WidgetText};
+use egui::{Color32, FontId, TextFormat, WidgetText};
 use egui::text::LayoutJob;
+
+/// Cross-platform process termination
+fn kill_process(pid: i32) {
+    #[cfg(unix)]
+    {
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+    #[cfg(windows)]
+    {
+        unsafe {
+            let handle = windows_sys::Win32::System::Threading::OpenProcess(
+                windows_sys::Win32::System::Threading::PROCESS_TERMINATE,
+                0,
+                pid as u32,
+            );
+            if handle != 0 {
+                windows_sys::Win32::System::Threading::TerminateProcess(handle, 1);
+                windows_sys::Win32::Foundation::CloseHandle(handle);
+            }
+        }
+    }
+}
 
 fn styled_button_label(shortcut: &str, color: Color32, label: &str) -> WidgetText {
     let mut job = LayoutJob::default();
@@ -66,8 +90,8 @@ fn get_snooze_duration_and_str() -> (Duration, String) {
 /// Show history with:
 ///   timer_cli --history [COUNT] or timer_cli -h [COUNT]
 ///
-/// Show live view with:
-///   timer_cli --view or timer_cli -v
+/// Show active timers with:
+///   timer_cli --active or timer_cli -a
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
@@ -76,10 +100,10 @@ struct Args {
     history: Option<usize>,
 
     /// Show a live view of active timers.
-    #[arg(short='v', long)]
-    view: bool,
+    #[arg(short='a', long)]
+    active: bool,
 
-    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --history or --view.
+    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --history or --active.
     duration: Option<String>,
 
     /// Optional message to include in the alarm popup.
@@ -88,11 +112,22 @@ struct Args {
     /// Run timer in foreground.
     #[arg(short, long, default_value_t = false)]
     fg: bool,
+
+    /// Internal flag: indicates this process was spawned as a background child (hidden from help).
+    #[arg(long, hide = true, default_value_t = false)]
+    background_child: bool,
 }
 
 /// Returns the path to the SQLite database.
 fn db_path() -> String {
-    "/tmp/timer_cli.db".to_string()
+    if cfg!(windows) {
+        let temp = std::env::var("TEMP")
+            .or_else(|_| std::env::var("TMP"))
+            .unwrap_or_else(|_| ".".to_string());
+        format!("{}\\timer_cli.db", temp)
+    } else {
+        "/tmp/timer_cli.db".to_string()
+    }
 }
 
 /// Initialize the database and create tables if they do not exist.
@@ -244,15 +279,30 @@ fn color(text: &str, name: &str) -> String {
 }
 
 /// Signal handler for SIGINT to exit immediately.
+#[cfg(unix)]
 extern "C" fn handle_sigint(_sig: i32) {
     process::exit(0);
+}
+
+/// Windows console control handler for Ctrl+C
+#[cfg(windows)]
+unsafe extern "system" fn handle_ctrl_c(ctrl_type: u32) -> i32 {
+    if ctrl_type == windows_sys::Win32::System::Console::CTRL_C_EVENT {
+        process::exit(0);
+    }
+    0
 }
 
 /// Displays a live view of active timers using the active_timers table.
 /// Rows are keyed by an autoincrement id.
 fn show_active_timer_db() -> Result<()> {
+    #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGINT, handle_sigint as usize);
+    }
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(handle_ctrl_c), 1);
     }
     let conn = init_db()?;
     use std::sync::mpsc;
@@ -346,9 +396,7 @@ fn show_active_timer_db() -> Result<()> {
                 let mut rows = stmt.query([])?;
                 while let Some(row) = rows.next()? {
                     let pid: i32 = row.get(0)?;
-                    unsafe {
-                        libc::kill(pid, libc::SIGTERM);
-                    }
+                    kill_process(pid);
                 }
                 conn.execute("DELETE FROM active_timers", [])?;
                 println!("Killed all active timers.");
@@ -360,9 +408,7 @@ fn show_active_timer_db() -> Result<()> {
                 let mut rows = stmt.query(params![active_id])?;
                 if let Some(row) = rows.next()? {
                     let pid: i32 = row.get(0)?;
-                    unsafe {
-                        libc::kill(pid, libc::SIGTERM);
-                    }
+                    kill_process(pid);
                     println!("Killed timer with PID {}", pid);
                     printed_lines += 2;
                     let _ = conn.execute("DELETE FROM active_timers WHERE id = ?1", params![active_id]);
@@ -423,7 +469,7 @@ impl App for TimerPopup {
                 let _ = s.send(TimerAction::Restart);
             }
             frame.close();
-        } else if ctx.input(|i| i.key_pressed(egui::Key::X)) {
+        } else if ctx.input(|i| i.key_pressed(egui::Key::S) || i.key_pressed(egui::Key::Escape)) {
             if let Some(s) = self.sender.take() {
                 let _ = s.send(TimerAction::Stop);
             }
@@ -442,7 +488,7 @@ impl App for TimerPopup {
                 if self.message.len() > 0 {
                     ui.add_space(25.0);
                 }
-                ui.colored_label(egui::Color32::LIGHT_GREEN, &self.message);
+                ui.colored_label(egui::Color32::LIGHT_GREEN, format!("\"{}\"", &self.message));
                 ui.add_space(20.0);
 
                 let (_snooze_duration, snooze_str) = get_snooze_duration_and_str();
@@ -456,7 +502,7 @@ impl App for TimerPopup {
                         TimerAction::Restart,
                     ),
                     (
-                        styled_button_label("[ x ] ", Color32::from_rgb(255, 0, 0), "Stop"),
+                        styled_button_label("[ s ] ", Color32::from_rgb(255, 0, 0), "Stop"),
                         TimerAction::Stop,
                     ),
                 ];
@@ -511,12 +557,19 @@ fn run_popup() {
 /// This sets the environment variable "POPUP_MODE" so the child runs popup mode.
 fn spawn_popup(popup_message: &str) -> TimerAction {
     let current_exe = std::env::current_exe().expect("Failed to get current executable");
-    let output = Command::new(current_exe)
-        .env("POPUP_MODE", "1")
+    let mut cmd = Command::new(current_exe);
+    cmd.env("POPUP_MODE", "1")
         .arg("--message")
-        .arg(popup_message)
-        .output()
-        .expect("Failed to spawn popup process");
+        .arg(popup_message);
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    
+    let output = cmd.output().expect("Failed to spawn popup process");
     let stdout = String::from_utf8_lossy(&output.stdout);
     match stdout.trim() {
         "snooze" => TimerAction::Snooze,
@@ -528,14 +581,14 @@ fn spawn_popup(popup_message: &str) -> TimerAction {
 /// Runs the timer. When time's up, it plays the sound and spawns a separate popup process.
 /// Depending on the chosen action, it deletes the old active timer record and inserts a new one.
 /// Durations are stored using the original formatting string.
-fn run_timer(mut duration: Duration, original_duration_str: String, popup_message: String, view: bool) {
+fn run_timer(mut duration: Duration, original_duration_str: String, popup_message: String, show_progress: bool) {
     let conn = init_db().expect("Failed to initialize DB");
     // Insert the initial active timer record using the original duration string.
     let mut active_timer_id = register_active_timer_db(&conn, &original_duration_str, &popup_message)
         .expect("Failed to register active timer");
 
     loop {
-        if view {
+        if show_progress {
             let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let total_millis = duration.as_secs() * 1000;
             let update_interval = 100;
@@ -601,12 +654,12 @@ fn main() {
         show_history_db(count).unwrap();
         return;
     }
-    if args.view {
+    if args.active {
         show_active_timer_db().unwrap();
         return;
     }
     let duration_str = args.duration.unwrap_or_else(|| {
-        eprintln!("Duration string required unless using --history or --view");
+        eprintln!("Duration string required unless using --history (-h) or --active (-a)");
         process::exit(1);
     });
     let duration = match parse_duration(&duration_str) {
@@ -620,21 +673,35 @@ fn main() {
     println!("Starting timer for {}...", duration_str);
 
     // If running in foreground, use the existing connection.
-    if args.fg {
+    if args.fg || args.background_child {
         let conn = init_db().expect("Failed to initialize database");
-        log_timer_creation_db(&conn, &duration_str, &popup_message, true).unwrap();
-        run_timer(duration, duration_str, popup_message.clone(), true);
+        log_timer_creation_db(&conn, &duration_str, &popup_message, args.fg).unwrap();
+        run_timer(duration, duration_str, popup_message.clone(), args.fg);
     } else {
-        // Background mode: daemonize first and then open a new DB connection.
-        let daemonize = Daemonize::new().working_directory(".").umask(0o027);
-        match daemonize.start() {
+        // Background mode: spawn a detached child process (cross-platform)
+        let exe = std::env::current_exe().expect("Failed to get current executable path");
+        let mut cmd = Command::new(exe);
+        cmd.arg(&duration_str)
+           .arg("--background-child");
+        
+        if !popup_message.is_empty() {
+            cmd.arg(&popup_message);
+        }
+
+        // On Windows, hide the console window
+        #[cfg(windows)]
+        let cmd = {
+            const DETACHED_PROCESS: u32 = 0x00000008;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+        };
+
+        match cmd.spawn() {
             Ok(_) => {
-                let conn = init_db().expect("Failed to initialize database after daemonizing");
-                log_timer_creation_db(&conn, &duration_str, &popup_message, false).unwrap();
-                run_timer(duration, duration_str, popup_message.clone(), false);
+                println!("Timer started in background.");
             }
             Err(e) => {
-                eprintln!("Error daemonizing: {}", e);
+                eprintln!("Error spawning background process: {}", e);
                 process::exit(1);
             }
         }

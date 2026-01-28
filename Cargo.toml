@@ -6,11 +6,15 @@ edition = "2021"
 [dependencies]
 textwrap = "0.15"
 eframe = "0.21"
-rusqlite = "0.28"
+rusqlite = { version = "0.28", features = ["bundled"] }
 clap = { version = "4.1", features = ["derive"] }
 humantime = "2.1"
 rodio = "0.17"
 native-dialog = "0.7.0"
-daemonize = "0.4"
 chrono = "0.4"
+
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_System_Threading", "Win32_Foundation", "Win32_System_Console"] }

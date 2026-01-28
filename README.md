@@ -9,13 +9,13 @@ Timer CLI is a lightweight command-line tool written in Rust that lets you set t
 - **Foreground/Background Mode:** Run timers in the foreground or as a daemon (background) so your terminal remains free.
 - **History Logging:** Timer events are logged (timestamp, duration, message, background flag) to a history file.
 - **View History:** Display the last _N_ timer events using the `--history` flag (defaults to 20 if omitted).
-- **Custom Notification Image:** *Note:* Timer CLI currently uses `native_dialog` for its pop-up notifications, which does not support changing the image at the top of the dialog. To display a custom image, consider using a more advanced GUI library (e.g., GTK or egui) and updating the code accordingly.
+- **Custom Notification Image:** _Note:_ Timer CLI currently uses `native_dialog` for its pop-up notifications, which does not support changing the image at the top of the dialog. To display a custom image, consider using a more advanced GUI library (e.g., GTK or egui) and updating the code accordingly.
 
 ## Installation
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (with Cargo)
+- [Rust](https://rustup.rs/) (Cargo)
 
 ### Build the Project
 
@@ -54,10 +54,13 @@ Alternatively, install the tool globally with Cargo:
 cargo install --path .
 ```
 
-Ensure that your Cargo bin directory is in your PATH. If it’s not, add the following line to your `~/.zshrc`:
+Ensure that your Cargo bin directory is in your PATH. If it’s not, add the following line to your `~/.zshrc`, `~/.bashrc`:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
+
+# Add this for a more concise shortcut
+alias tt="timer_cli"
 ```
 
 Then reload your shell:
@@ -114,7 +117,7 @@ YYYY-MM-DD HH:MM:SS | Duration: <duration> | Message: <message> | Background: <t
 
 ## Custom Notification Image
 
-*Note:* Timer CLI currently uses `native_dialog` for its pop-up notifications, which does not support changing the image at the top of the dialog. To display a custom image, consider using a more advanced GUI library (e.g., GTK or egui) and update the code accordingly.
+_Note:_ Timer CLI currently uses `native_dialog` for its pop-up notifications, which does not support changing the image at the top of the dialog.
 
 ## License
 
