@@ -29,13 +29,14 @@ $Script:InstallDir = "$env:USERPROFILE\.local\bin"
 $Script:CargoBin = "$env:USERPROFILE\.cargo\bin"
 
 # ============================================================================
-# Helper Functions
+# Helper Functions (Tokyo Night theme colors)
 # ============================================================================
 
-function Write-Success { param($Message) Write-Host "✓ " -ForegroundColor Green -NoNewline; Write-Host $Message }
-function Write-Warn { param($Message) Write-Host "→ " -ForegroundColor Yellow -NoNewline; Write-Host $Message }
-function Write-Err { param($Message) Write-Host "✗ " -ForegroundColor Red -NoNewline; Write-Host $Message }
-function Write-Info { param($Message) Write-Host "i " -ForegroundColor Cyan -NoNewline; Write-Host $Message }
+# Tokyo Night colors: Green #9ece6a, Yellow #e0af68, Pink #f7768e, Blue #7aa2f7, Purple #bb9af7
+function Write-Success { param($Message) Write-Host "✓ " -ForegroundColor DarkGreen -NoNewline; Write-Host $Message }
+function Write-Warn { param($Message) Write-Host "→ " -ForegroundColor DarkYellow -NoNewline; Write-Host $Message }
+function Write-Err { param($Message) Write-Host "✗ " -ForegroundColor Magenta -NoNewline; Write-Host $Message }
+function Write-Info { param($Message) Write-Host "i " -ForegroundColor Blue -NoNewline; Write-Host $Message }
 
 function Show-Usage {
     @"

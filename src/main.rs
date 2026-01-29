@@ -277,9 +277,80 @@ fn color(text: &str, name: &str) -> String {
         "purple"  => 183,
         "pink"    => 218,
         "gray"    => 250,
+        "white"   => 255,
         _ => 15,
     };
     format!("\x1B[38;5;{}m{}\x1B[0m", code, text)
+}
+
+/// Pads a string to a specific display width, accounting for unicode/emoji widths
+fn pad_display_width(s: &str, width: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+    let current_width = UnicodeWidthStr::width(s);
+    if current_width >= width {
+        s.to_string()
+    } else {
+        format!("{}{}", s, " ".repeat(width - current_width))
+    }
+}
+
+/// Prints a fancy box for timer creation with Tokyo Night colors
+fn print_timer_started_box(duration: &str, message: &str, end_time: &str, is_background: bool) {
+    let mode_str = if is_background { "Background 🌙" } else { "Foreground 👁" };
+    let inner_width = 36;
+    let label_width = 12; // "⏳ Duration:" etc
+    let value_width = inner_width - label_width - 4; // 4 for "│  " and " │"
+    
+    // Top border
+    println!("  ╭{}╮", "─".repeat(inner_width));
+    
+    // Header
+    let header = "⏱  Timer Started";
+    let header_padded = pad_display_width(header, inner_width - 2);
+    println!("  │ {} │", color(&header_padded, "green"));
+    
+    // Separator
+    println!("  ├{}┤", "─".repeat(inner_width));
+    
+    // Duration row
+    let dur_val = pad_display_width(duration, value_width);
+    let dur_line = format!("⏳ Duration:  {}", color(&dur_val, "pink"));
+    let dur_padded = pad_display_width(&dur_line, inner_width - 2 + 11); // +11 for ANSI codes
+    println!("  │ {} │", dur_padded);
+    
+    // Message row (only if message exists)
+    if !message.is_empty() {
+        let display_msg = if message.len() > value_width {
+            format!("{}...", &message[..value_width - 3])
+        } else {
+            message.to_string()
+        };
+        let msg_val = pad_display_width(&display_msg, value_width);
+        let msg_line = format!("💬 Message:   {}", color(&msg_val, "purple"));
+        let msg_padded = pad_display_width(&msg_line, inner_width - 2 + 11);
+        println!("  │ {} │", msg_padded);
+    }
+    
+    // Ends at row
+    let end_val = pad_display_width(end_time, value_width);
+    let end_line = format!("🔔 Ends at:   {}", color(&end_val, "blue"));
+    let end_padded = pad_display_width(&end_line, inner_width - 2 + 11);
+    println!("  │ {} │", end_padded);
+    
+    // Status row
+    let status_val = pad_display_width(mode_str, value_width);
+    let status_line = format!("🚀 Status:    {}", color(&status_val, "gray"));
+    let status_padded = pad_display_width(&status_line, inner_width - 2 + 11);
+    println!("  │ {} │", status_padded);
+    
+    // Bottom border
+    println!("  ╰{}╯", "─".repeat(inner_width));
+}
+
+/// Helper to color just the pipe characters gray
+fn replace_pipe_with_gray(line: &str) -> String {
+    let gray_pipe = color("│", "gray");
+    line.replace("│", &gray_pipe)
 }
 
 /// Signal handler for SIGINT to exit immediately.
@@ -300,44 +371,39 @@ unsafe extern "system" fn handle_ctrl_c(ctrl_type: u32) -> i32 {
 /// Displays a live view of active timers using the active_timers table.
 /// Rows are keyed by an autoincrement id.
 fn show_active_timer_db() -> Result<()> {
-    #[cfg(unix)]
-    unsafe {
-        libc::signal(libc::SIGINT, handle_sigint as usize);
+    use std::io::{stdout, Write};
+    use crossterm::{
+        event::{self, Event, KeyCode, KeyEventKind},
+        terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
+        execute, cursor,
+    };
+    
+    // RAII guard to ensure terminal is always restored
+    struct TerminalGuard;
+    impl Drop for TerminalGuard {
+        fn drop(&mut self) {
+            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = crossterm::execute!(std::io::stdout(), LeaveAlternateScreen);
+        }
     }
-    #[cfg(windows)]
-    unsafe {
-        windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(handle_ctrl_c), 1);
-    }
+    
     let conn = init_db()?;
-    use std::sync::mpsc;
-    use std::io::{self, stdout};
-    use std::thread;
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let stdin = io::stdin();
-        for line in stdin.lock().lines().flatten() {
-            let trimmed = line.trim().to_string();
-            if !trimmed.is_empty() {
-                let _ = tx.send(trimmed);
-            }
-        }
-    });
-    let mut first_iteration = true;
-    let mut last_lines = 0;
+    let mut input_buffer = String::new();
+    let mut status_message: Option<(String, std::time::Instant)> = None;
+    
+    // Enter alternate screen and enable raw mode
+    execute!(stdout(), EnterAlternateScreen).ok();
+    terminal::enable_raw_mode().ok();
+    
+    // Guard ensures cleanup happens even on panic or early return
+    let _guard = TerminalGuard;
+    
     loop {
-        if !first_iteration {
-            print!("\x1B[{}A", last_lines);
-            for _ in 0..last_lines {
-                print!("\x1B[2K\r\n");
-            }
-            print!("\x1B[{}A", last_lines);
-        }
-        first_iteration = false;
-        let mut printed_lines = 0;
-        println!("{}", color("Active Timers:", "gray"));
-        printed_lines += 1;
-        println!("{}", "-".repeat(100));
-        printed_lines += 1;
+        // Clear and draw UI
+        let _ = execute!(stdout(), cursor::MoveTo(0, 0), terminal::Clear(terminal::ClearType::All));
+        
+        println!("{}\r", color("Active Timers:", "gray"));
+        println!("{}\r", "-".repeat(60));
 
         // Query active timers from the DB.
         let mut stmt = conn.prepare("SELECT id, pid, started, duration, message FROM active_timers ORDER BY id")?;
@@ -356,7 +422,7 @@ fn show_active_timer_db() -> Result<()> {
         }
 
         // Display each active timer and compute remaining time.
-        for (id, pid, started, duration_str, message) in active_timers.iter() {
+        for (id, _pid, started, duration_str, message) in active_timers.iter() {
             if let Ok(start_time) = chrono::NaiveDateTime::parse_from_str(&started, "%Y-%m-%d %H:%M:%S") {
                 let start_time: chrono::DateTime<chrono::Local> =
                     chrono::Local.from_local_datetime(&start_time).unwrap();
@@ -372,64 +438,98 @@ fn show_active_timer_db() -> Result<()> {
                     let hours = secs / 3600;
                     let minutes = (secs % 3600) / 60;
                     let seconds = secs % 60;
-                    let time_left_str = format!("\x1B[32m{:02}:{:02}:{:02} \x1B[0m", hours, minutes, seconds);
+                    let time_left_str = format!("\x1B[32m{:02}:{:02}:{:02}\x1B[0m", hours, minutes, seconds);
+                    
+                    // Truncate message if too long
+                    let display_message = if message.len() > 30 {
+                        format!("{}...", &message[..27])
+                    } else {
+                        message.clone()
+                    };
+                    
                     println!(
-                        "ID: {} [PID: {}] | Started: {} | Duration: {} | Message: {} | Time Left: {}",
+                        "ID: {} | {} | {} | {}\r",
                         color(&id.to_string(), "red"),
-                        pid,
-                        color(started, "blue"),
                         color(duration_str, "pink"),
-                        color(message, "purple"),
+                        color(&display_message, "purple"),
                         time_left_str
                     );
-                    printed_lines += 1;
                 }
             }
         }
-        println!();
-        printed_lines += 1;
-        println!("{} {}", color("Type an ID to kill, or 'all'", "gray"), color("[ Ctrl+C to exit ]", "gray"));
-        printed_lines += 1;
-
-        stdout().flush().unwrap();
-
-        // Process user input.
-        if let Ok(input) = rx.try_recv() {
-            if input.eq_ignore_ascii_case("all") {
-                let mut stmt = conn.prepare("SELECT pid FROM active_timers")?;
-                let mut rows = stmt.query([])?;
-                while let Some(row) = rows.next()? {
-                    let pid: i32 = row.get(0)?;
-                    kill_process(pid);
-                }
-                conn.execute("DELETE FROM active_timers", [])?;
-                println!("Killed all active timers.");
-                printed_lines += 2;
-                sleep(Duration::from_secs(2));
-            }
-            else if let Ok(active_id) = input.parse::<i64>() {
-                let mut stmt = conn.prepare("SELECT pid FROM active_timers WHERE id = ?1")?;
-                let mut rows = stmt.query(params![active_id])?;
-                if let Some(row) = rows.next()? {
-                    let pid: i32 = row.get(0)?;
-                    kill_process(pid);
-                    println!("Killed timer with PID {}", pid);
-                    printed_lines += 2;
-                    let _ = conn.execute("DELETE FROM active_timers WHERE id = ?1", params![active_id]);
-                    sleep(Duration::from_secs(2));
-                } else {
-                    println!("No active timer with that ID.");
-                    printed_lines += 2;
-                    sleep(Duration::from_secs(2));
-                }
+        
+        if active_timers.is_empty() {
+            println!("{}\r", color("No active timers", "gray"));
+        }
+        
+        println!("\r");
+        
+        // Show status message if recent
+        if let Some((msg, instant)) = &status_message {
+            if instant.elapsed() < std::time::Duration::from_secs(2) {
+                println!("{}\r", color(msg, "green"));
             } else {
-                println!("Invalid input.");
-                printed_lines += 2;
-                sleep(Duration::from_secs(2));
+                status_message = None;
             }
         }
-        last_lines = printed_lines;
-        sleep(Duration::from_secs(1));
+        
+        // Show input prompt with current buffer
+        println!("{}\r", color("Enter ID to kill, 'all', or Ctrl+C to exit:", "gray"));
+        print!("> {}", color(&input_buffer, "white"));
+        let _ = stdout().flush();
+
+        // Poll for input with 1 second timeout (for refresh)
+        if event::poll(std::time::Duration::from_secs(1)).unwrap_or(false) {
+            if let Ok(Event::Key(key_event)) = event::read() {
+                if key_event.kind == KeyEventKind::Press {
+                    match key_event.code {
+                        KeyCode::Char('c') if key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                            return Ok(());
+                        }
+                        KeyCode::Enter => {
+                            let input = input_buffer.trim().to_string();
+                            input_buffer.clear();
+                            
+                            if !input.is_empty() {
+                                if input.eq_ignore_ascii_case("all") {
+                                    let mut stmt = conn.prepare("SELECT pid FROM active_timers")?;
+                                    let mut rows = stmt.query([])?;
+                                    while let Some(row) = rows.next()? {
+                                        let pid: i32 = row.get(0)?;
+                                        kill_process(pid);
+                                    }
+                                    conn.execute("DELETE FROM active_timers", [])?;
+                                    status_message = Some(("Killed all active timers.".to_string(), std::time::Instant::now()));
+                                } else if let Ok(active_id) = input.parse::<i64>() {
+                                    let mut stmt = conn.prepare("SELECT pid FROM active_timers WHERE id = ?1")?;
+                                    let mut rows = stmt.query(params![active_id])?;
+                                    if let Some(row) = rows.next()? {
+                                        let pid: i32 = row.get(0)?;
+                                        kill_process(pid);
+                                        let _ = conn.execute("DELETE FROM active_timers WHERE id = ?1", params![active_id]);
+                                        status_message = Some((format!("Killed timer {}", active_id), std::time::Instant::now()));
+                                    } else {
+                                        status_message = Some(("No active timer with that ID.".to_string(), std::time::Instant::now()));
+                                    }
+                                } else {
+                                    status_message = Some(("Invalid input.".to_string(), std::time::Instant::now()));
+                                }
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            input_buffer.pop();
+                        }
+                        KeyCode::Char(c) => {
+                            input_buffer.push(c);
+                        }
+                        KeyCode::Esc => {
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -702,10 +802,9 @@ fn main() {
     };
     let popup_message = args.message.unwrap_or_else(|| "".to_string());
     
-    // Only print startup message if not a background child (to avoid double-printing)
-    if !args.background_child {
-        println!("Starting timer for {}...", duration_str);
-    }
+    // Calculate end time for display
+    let end_time = chrono::Local::now() + chrono::Duration::from_std(duration).unwrap();
+    let end_time_str = end_time.format("%-I:%M %p").to_string();
 
     // If running in foreground, use the existing connection.
     if args.fg || args.background_child {
@@ -713,6 +812,7 @@ fn main() {
         // Only log to DB if not background child (parent already logged it)
         if !args.background_child {
             log_timer_creation_db(&conn, &duration_str, &popup_message, args.fg).unwrap();
+            print_timer_started_box(&duration_str, &popup_message, &end_time_str, false);
         }
         run_timer(duration, duration_str, popup_message.clone(), args.fg);
     } else {
@@ -726,18 +826,13 @@ fn main() {
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
-            use std::fs::File;
-            
-            let dev_null = File::open("/dev/null").expect("Failed to open /dev/null");
-            let dev_null_out = File::create("/dev/null").expect("Failed to open /dev/null for writing");
-            let dev_null_err = File::create("/dev/null").expect("Failed to open /dev/null for writing");
             
             let mut cmd = Command::new(&exe);
             cmd.arg(&duration_str)
                .arg("--background-child")
-               .stdin(dev_null)
-               .stdout(dev_null_out)
-               .stderr(dev_null_err);
+               .stdin(std::process::Stdio::null())
+               .stdout(std::process::Stdio::null())
+               .stderr(std::process::Stdio::null());
             
             if !popup_message.is_empty() {
                 cmd.arg(&popup_message);
@@ -753,7 +848,7 @@ fn main() {
             
             match cmd.spawn() {
                 Ok(_) => {
-                    println!("Timer started in background.");
+                    print_timer_started_box(&duration_str, &popup_message, &end_time_str, true);
                 }
                 Err(e) => {
                     eprintln!("Error spawning background process: {}", e);
@@ -781,7 +876,7 @@ fn main() {
             
             match cmd.spawn() {
                 Ok(_) => {
-                    println!("Timer started in background.");
+                    print_timer_started_box(&duration_str, &popup_message, &end_time_str, true);
                 }
                 Err(e) => {
                     eprintln!("Error spawning background process: {}", e);

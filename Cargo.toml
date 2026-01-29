@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 textwrap = "0.15"
+unicode-width = "0.1"
 eframe = "0.21"
 rusqlite = { version = "0.28", features = ["bundled"] }
 clap = { version = "4.1", features = ["derive"] }
@@ -25,6 +26,9 @@ audio = []
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dependencies.crossterm]
+version = "0.27"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = ["Win32_System_Threading", "Win32_Foundation", "Win32_System_Console"] }
