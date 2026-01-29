@@ -274,7 +274,7 @@ fn unregister_active_timer_db(conn: &Connection, active_id: i64) -> Result<()> {
 
 /// Check for updates by comparing local version with GitHub releases
 fn check_for_updates() {
-    use std::process::Command;
+    use std::io::{self, Write};
     
     let current_version = env!("CARGO_PKG_VERSION");
     println!();
@@ -295,16 +295,28 @@ fn check_for_updates() {
                 println!();
                 println!("  {} {}", color("🚀", "green"), color("Update available!", "green"));
                 println!();
-                println!("  To update, run:");
-                println!();
                 
-                #[cfg(unix)]
-                {
-                    println!("    {}", color("curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | bash", "cyan"));
-                }
-                #[cfg(windows)]
-                {
-                    println!("    {}", color("iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.ps1 | iex", "cyan"));
+                // Prompt user
+                print!("  Update now? [y/N] ");
+                io::stdout().flush().unwrap();
+                
+                let mut input = String::new();
+                if io::stdin().read_line(&mut input).is_ok() {
+                    let input = input.trim().to_lowercase();
+                    if input == "y" || input == "yes" {
+                        println!();
+                        println!("  {} Updating...", color("⏳", "blue"));
+                        println!();
+                        run_update();
+                    } else {
+                        println!();
+                        println!("  To update later, run:");
+                        println!();
+                        #[cfg(unix)]
+                        println!("    {}", color("curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | bash", "cyan"));
+                        #[cfg(windows)]
+                        println!("    {}", color("iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.ps1 | iex", "cyan"));
+                    }
                 }
             } else {
                 println!("  Latest version:  {}", color(&format!("v{}", latest_clean), "gray"));
@@ -320,6 +332,46 @@ fn check_for_updates() {
         }
     }
     println!();
+}
+
+/// Run the update script
+fn run_update() {
+    use std::process::Command;
+    
+    #[cfg(unix)]
+    {
+        let status = Command::new("sh")
+            .args(["-c", "curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | bash"])
+            .status();
+        
+        match status {
+            Ok(s) if s.success() => {
+                println!();
+                println!("  {} {}", color("✓", "green"), color("Update complete! Restart your terminal to use the new version.", "green"));
+            }
+            _ => {
+                println!("  {} Update failed. Try running the command manually.", color("✗", "red"));
+            }
+        }
+    }
+    
+    #[cfg(windows)]
+    {
+        let status = Command::new("powershell")
+            .args(["-ExecutionPolicy", "Bypass", "-Command", 
+                   "iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.ps1 | iex"])
+            .status();
+        
+        match status {
+            Ok(s) if s.success() => {
+                println!();
+                println!("  {} {}", color("✓", "green"), color("Update complete! Restart your terminal to use the new version.", "green"));
+            }
+            _ => {
+                println!("  {} Update failed. Try running the command manually.", color("✗", "red"));
+            }
+        }
+    }
 }
 
 /// Fetch the latest version tag from GitHub API using native HTTP
