@@ -12,6 +12,11 @@ install: build
 	@mkdir -p $(INSTALL_DIR)
 	@cp target/release/$(BINARY) $(INSTALL_DIR)/$(BINARY)
 	@echo "✓ Installed $(BINARY) to $(INSTALL_DIR)"
+	@if ! echo "$$PATH" | grep -q "$(INSTALL_DIR)"; then \
+		echo ""; \
+		echo "⚠ $(INSTALL_DIR) is not in PATH. Run:"; \
+		echo "  export PATH=\"$(INSTALL_DIR):$$PATH\""; \
+	fi
 
 # Clean reinstall - removes old binary, cleans db, rebuilds and installs
 reinstall:

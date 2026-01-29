@@ -116,6 +116,10 @@ struct Args {
     #[arg(short='a', long)]
     active: bool,
 
+    /// Kill all active timers (no short flag to prevent accidental use)
+    #[arg(long)]
+    kill: bool,
+
     /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --logs or --active.
     duration: Option<String>,
 
@@ -253,6 +257,34 @@ fn show_history_db(count: usize) -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+/// Kill all active timers without entering the interactive view
+fn kill_all_timers() -> Result<()> {
+    let conn = init_db()?;
+    let mut stmt = conn.prepare("SELECT id, pid FROM active_timers")?;
+    let timers: Vec<(i64, i32)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    
+    if timers.is_empty() {
+        println!("{}", color("No active timers to kill.", "gray"));
+        return Ok(());
+    }
+    
+    let count = timers.len();
+    for (_id, pid) in &timers {
+        kill_process(*pid);
+    }
+    conn.execute("DELETE FROM active_timers", [])?;
+    
+    println!("{} Killed {} active timer{}.", 
+        color("✓", "green"),
+        color(&count.to_string(), "red"),
+        if count == 1 { "" } else { "s" }
+    );
     Ok(())
 }
 
@@ -1025,8 +1057,12 @@ fn main() {
         show_active_timer_db().unwrap();
         return;
     }
+    if args.kill {
+        kill_all_timers().unwrap();
+        return;
+    }
     let duration_str = args.duration.unwrap_or_else(|| {
-        eprintln!("Duration string required unless using --logs (-l), --active (-a), or --update (-u)");
+        eprintln!("Duration string required unless using --logs (-l), --active (-a), --kill, or --update (-u)");
         process::exit(1);
     });
     let duration = match parse_duration(&duration_str) {
