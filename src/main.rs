@@ -91,6 +91,9 @@ fn get_snooze_duration_and_str() -> (Duration, String) {
 ///
 /// Show active timers with:
 ///   timer_cli --active or timer_cli -a
+///
+/// Check for updates with:
+///   timer_cli --update or timer_cli -u
 #[derive(Parser)]
 #[command(author, about, version)]
 #[command(disable_version_flag = true)]
@@ -98,6 +101,10 @@ struct Args {
     /// Print version information
     #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
     version: (),
+
+    /// Check for updates and show install instructions
+    #[arg(short = 'u', long)]
+    update: bool,
 
     /// Show the last N timer entries from history if provided (defaults to 10)
     #[arg(short='h', long, value_name = "HISTORY", num_args = 0..=1, default_missing_value = "10")]
@@ -263,6 +270,123 @@ fn register_active_timer_db(conn: &Connection, duration_str: &str, message: &str
 fn unregister_active_timer_db(conn: &Connection, active_id: i64) -> Result<()> {
     conn.execute("DELETE FROM active_timers WHERE id = ?1", params![active_id])?;
     Ok(())
+}
+
+/// Check for updates by comparing local version with GitHub releases
+fn check_for_updates() {
+    use std::process::Command;
+    
+    let current_version = env!("CARGO_PKG_VERSION");
+    println!();
+    println!("  {} Checking for updates...", color("⏳", "blue"));
+    println!();
+    println!("  Current version: {}", color(&format!("v{}", current_version), "purple"));
+    
+    // Try to fetch latest version from GitHub API
+    let latest_version = fetch_latest_version();
+    
+    match latest_version {
+        Some(latest) => {
+            let latest_clean = latest.trim_start_matches('v');
+            let current_clean = current_version.trim_start_matches('v');
+            
+            if latest_clean != current_clean && is_newer_version(latest_clean, current_clean) {
+                println!("  Latest version:  {}", color(&format!("v{}", latest_clean), "green"));
+                println!();
+                println!("  {} {}", color("🚀", "green"), color("Update available!", "green"));
+                println!();
+                println!("  To update, run:");
+                println!();
+                
+                #[cfg(unix)]
+                {
+                    println!("    {}", color("curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | bash", "cyan"));
+                }
+                #[cfg(windows)]
+                {
+                    println!("    {}", color("iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.ps1 | iex", "cyan"));
+                }
+            } else {
+                println!("  Latest version:  {}", color(&format!("v{}", latest_clean), "gray"));
+                println!();
+                println!("  {} {}", color("✓", "green"), color("You're up to date!", "green"));
+            }
+        }
+        None => {
+            println!("  {} Could not check for updates (network error)", color("⚠", "yellow"));
+            println!();
+            println!("  Check releases manually:");
+            println!("    {}", color("https://github.com/EricLBaker/rust_cli_timer/releases", "blue"));
+        }
+    }
+    println!();
+}
+
+/// Fetch the latest version tag from GitHub API
+fn fetch_latest_version() -> Option<String> {
+    // Use curl/wget on Unix, PowerShell on Windows
+    #[cfg(unix)]
+    {
+        let output = std::process::Command::new("curl")
+            .args(["-s", "-f", "https://api.github.com/repos/EricLBaker/rust_cli_timer/releases/latest"])
+            .output()
+            .ok()?;
+        
+        if !output.status.success() {
+            return None;
+        }
+        
+        let body = String::from_utf8_lossy(&output.stdout);
+        // Simple JSON parsing for "tag_name": "vX.Y.Z"
+        for line in body.lines() {
+            if line.contains("\"tag_name\"") {
+                if let Some(start) = line.find(": \"") {
+                    let rest = &line[start + 3..];
+                    if let Some(end) = rest.find('"') {
+                        return Some(rest[..end].to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("powershell")
+            .args(["-Command", "(Invoke-RestMethod -Uri 'https://api.github.com/repos/EricLBaker/rust_cli_timer/releases/latest').tag_name"])
+            .output()
+            .ok()?;
+        
+        if !output.status.success() {
+            return None;
+        }
+        
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+}
+
+/// Compare semantic versions (returns true if latest > current)
+fn is_newer_version(latest: &str, current: &str) -> bool {
+    let parse_version = |v: &str| -> Vec<u32> {
+        v.split('.')
+            .filter_map(|s| s.parse().ok())
+            .collect()
+    };
+    
+    let latest_parts = parse_version(latest);
+    let current_parts = parse_version(current);
+    
+    for i in 0..std::cmp::max(latest_parts.len(), current_parts.len()) {
+        let l = latest_parts.get(i).copied().unwrap_or(0);
+        let c = current_parts.get(i).copied().unwrap_or(0);
+        if l > c {
+            return true;
+        } else if l < c {
+            return false;
+        }
+    }
+    false
 }
 
 fn color(text: &str, name: &str) -> String {
@@ -781,6 +905,13 @@ fn main() {
         return;
     }
     let args = Args::parse();
+    
+    // Check for updates
+    if args.update {
+        check_for_updates();
+        return;
+    }
+    
     if let Some(count) = args.history {
         show_history_db(count).unwrap();
         return;
@@ -790,7 +921,7 @@ fn main() {
         return;
     }
     let duration_str = args.duration.unwrap_or_else(|| {
-        eprintln!("Duration string required unless using --history (-h) or --active (-a)");
+        eprintln!("Duration string required unless using --history (-h), --active (-a), or --update (-u)");
         process::exit(1);
     });
     let duration = match parse_duration(&duration_str) {

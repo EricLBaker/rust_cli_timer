@@ -207,7 +207,7 @@ function Install-FromSource {
 }
 
 function Add-Alias {
-    # Add tt alias to PowerShell profile
+    # Add tt alias and PATH to PowerShell profile
     $profilePath = $PROFILE.CurrentUserAllHosts
     $profileDir = Split-Path $profilePath -Parent
     
@@ -221,17 +221,34 @@ function Add-Alias {
         New-Item -ItemType File -Path $profilePath -Force | Out-Null
     }
     
-    $aliasLine = "Set-Alias -Name tt -Value timer_cli"
-    
-    # Only add if not already present
     $content = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+    if (-not $content) { $content = "" }
+    
+    $modified = $false
+    
+    # Add PATH entry if not present
+    $pathLine = "`$env:Path = `"$Script:InstallDir;`$env:Path`""
+    if ($content -notmatch [regex]::Escape($Script:InstallDir)) {
+        Add-Content -Path $profilePath -Value "`n# Timer CLI PATH`n$pathLine"
+        Write-Info "Added $Script:InstallDir to PowerShell profile PATH"
+        $modified = $true
+    }
+    
+    # Add alias if not present
+    $aliasLine = "Set-Alias -Name tt -Value timer_cli"
     if ($content -notmatch 'Set-Alias.*tt.*timer_cli') {
         Add-Content -Path $profilePath -Value "`n# Timer CLI shortcut`n$aliasLine"
         Write-Info "Added 'tt' alias to PowerShell profile"
+        $modified = $true
     }
     
     # Set for current session
+    $env:Path = "$Script:InstallDir;$env:Path"
     Set-Alias -Name tt -Value timer_cli -Scope Global
+    
+    if ($modified) {
+        Write-Info "Profile updated: $profilePath"
+    }
 }
 
 # ============================================================================
