@@ -31,6 +31,25 @@ The installer automatically:
 - Creates the `tt` alias
 
 <details>
+<summary>Install a specific version</summary>
+
+**macOS / Linux / WSL:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | bash -s -- --version v1.0.8
+```
+
+**Windows (PowerShell):**
+
+```powershell
+# Download and run with version parameter
+$script = Invoke-WebRequest -Uri "https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.ps1" -UseBasicParsing
+& ([scriptblock]::Create($script.Content)) -Version v1.0.8
+```
+
+</details>
+
+<details>
 <summary>Uninstall</summary>
 
 **macOS / Linux / WSL:**
@@ -195,8 +214,6 @@ Check if a new version is available:
 ```bash
 tt -u
 ```
-
-To update, re-run the install command for your platform.
 
 <br>
 
