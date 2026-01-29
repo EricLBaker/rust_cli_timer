@@ -6,6 +6,8 @@ A fast, cross-platform command-line timer with notifications and sound alerts.
 tt 5m "Take a break"
 ```
 
+<img src="https://github.com/EricLBaker/rust_cli_timer/raw/main/assets/terminal_timer_output.png" width="350" alt="Timer started output">
+
 <br>
 
 ## Install
@@ -160,6 +162,8 @@ tt 45m "Check if pipeline finished"
 tt 1h "Stand up and stretch"
 ```
 
+<br>
+
 > [!TIP]
 > Custom Aliases
 >
@@ -175,6 +179,8 @@ tt 1h "Stand up and stretch"
 > # Quick breaks
 > alias stretch='tt 1h "Stand up and stretch"'
 > ```
+
+<br>
 
 ## License
 
