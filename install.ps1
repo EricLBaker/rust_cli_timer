@@ -13,6 +13,7 @@
 [CmdletBinding()]
 param(
     [switch]$BuildFromSource,
+    [string]$Version,
     [switch]$Help
 )
 
@@ -47,6 +48,7 @@ Usage:
     .\install.ps1 [options]
 
 Options:
+    -Version VERSION    Install a specific version (e.g., v1.0.5)
     -BuildFromSource    Build from source instead of downloading binary
     -Help               Show this help
 
@@ -57,6 +59,9 @@ Environment variables:
 Examples:
     # Install latest version
     iwr -useb https://raw.githubusercontent.com/$Script:Repo/main/install.ps1 | iex
+
+    # Install specific version
+    .\install.ps1 -Version v1.0.5
 
     # Build from source
     .\install.ps1 -BuildFromSource
@@ -280,11 +285,18 @@ function Main {
     
     if (-not $BuildFromSource) {
         Write-Warn "Checking for pre-built release..."
-        $version = Get-LatestVersion
         
-        if ($version) {
-            Write-Success "Found version: $version"
-            $installed = Install-FromRelease -Version $version
+        # Use specified version or get latest
+        if ($Version) {
+            $targetVersion = $Version
+            Write-Info "Installing specific version: $targetVersion"
+        } else {
+            $targetVersion = Get-LatestVersion
+        }
+        
+        if ($targetVersion) {
+            Write-Success "Found version: $targetVersion"
+            $installed = Install-FromRelease -Version $targetVersion
             if (-not $installed) {
                 Write-Warn "Pre-built binary not available for $platform"
             }

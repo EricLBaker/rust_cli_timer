@@ -371,7 +371,53 @@ install_from_source() {
 # Main
 # ============================================================================
 
+show_usage() {
+    cat << EOF
+Terminal Timer (tt) CLI Installer
+
+Usage: 
+    curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | bash
+    ./install.sh [OPTIONS]
+
+Options:
+    -v, --version VERSION   Install a specific version (e.g., v1.0.5)
+    -h, --help              Show this help message
+
+Environment Variables:
+    TIMER_CLI_INSTALL_DIR    Installation directory (default: ~/.local/bin)
+    TIMER_CLI_BUILD_FROM_SOURCE  Set to 1 to build from source
+
+Examples:
+    # Install latest version
+    curl -fsSL .../install.sh | bash
+
+    # Install specific version
+    curl -fsSL .../install.sh | bash -s -- --version v1.0.5
+EOF
+}
+
 main() {
+    local target_version=""
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -v|--version)
+                target_version="$2"
+                shift 2
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+        esac
+    done
+
     echo -e "${BOLD}🕐 Terminal Timer (tt) CLI Installer${NC}"
     echo ""
 
@@ -391,7 +437,14 @@ main() {
     if [[ "$BUILD_FROM_SOURCE" != "1" ]]; then
         log_warn "Checking for pre-built release..."
         local version
-        version=$(get_latest_version || true)
+        
+        # Use specified version or get latest
+        if [[ -n "$target_version" ]]; then
+            version="$target_version"
+            log_info "Installing specific version: ${INFO}${version}${NC}"
+        else
+            version=$(get_latest_version || true)
+        fi
         
         if [[ -n "$version" ]]; then
             log_success "Found version: ${INFO}${version}${NC}"

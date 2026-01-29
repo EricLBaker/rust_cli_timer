@@ -9,6 +9,8 @@ use std::io::{Write, Cursor, BufRead};
 use std::process::Command;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt as UnixCommandExt;
 use eframe::{egui, App};
 use egui::{Color32, FontId, TextFormat, WidgetText};
 use egui::text::LayoutJob;
@@ -347,7 +349,12 @@ fn run_update() {
         match status {
             Ok(s) if s.success() => {
                 println!();
-                println!("  {} {}", color("✓", "green"), color("Update complete! Restart your terminal to use the new version.", "green"));
+                println!("  {} {}", color("✓", "green"), color("Update complete!", "green"));
+                println!();
+                
+                // Get the user's shell and exec into it to reload
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+                println!("  Run {} or open a new terminal to use the updated version.", color("exec $SHELL", "cyan"));
             }
             _ => {
                 println!("  {} Update failed. Try running the command manually.", color("✗", "red"));
@@ -365,7 +372,9 @@ fn run_update() {
         match status {
             Ok(s) if s.success() => {
                 println!();
-                println!("  {} {}", color("✓", "green"), color("Update complete! Restart your terminal to use the new version.", "green"));
+                println!("  {} {}", color("✓", "green"), color("Update complete!", "green"));
+                println!();
+                println!("  Please close and reopen PowerShell to use the updated version.");
             }
             _ => {
                 println!("  {} Update failed. Try running the command manually.", color("✗", "red"));
