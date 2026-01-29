@@ -106,9 +106,7 @@ function Add-ToUserPath {
         # Also update current session
         $env:Path = "$Directory;$env:Path"
         Write-Success "Added $Directory to PATH"
-        return $true
     }
-    return $false
 }
 
 function Test-InPath {
@@ -160,13 +158,16 @@ function Install-FromRelease {
     $downloadUrl = "https://github.com/$Script:Repo/releases/download/$Version/$Script:BinaryName-$platform.exe"
     
     Write-Warn "Downloading $Script:BinaryName ($Version)..."
+    Write-Info "URL: $downloadUrl"
     
     $tempFile = "$env:TEMP\$Script:BinaryName.exe"
     
     try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $tempFile -UseBasicParsing
+        # Use -MaximumRedirection to follow GitHub's redirects
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $tempFile -UseBasicParsing -MaximumRedirection 5
         
-        if (-not (Test-Path $tempFile) -or (Get-Item $tempFile).Length -eq 0) {
+        if (-not (Test-Path $tempFile) -or (Get-Item $tempFile).Length -lt 1000) {
+            Write-Err "Download failed or file too small"
             return $false
         }
         
@@ -182,6 +183,7 @@ function Install-FromRelease {
         Write-Success "Installed to $targetPath"
         return $true
     } catch {
+        Write-Err "Download error: $_"
         Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
         return $false
     }
