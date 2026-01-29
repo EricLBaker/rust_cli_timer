@@ -298,26 +298,36 @@ fn check_for_updates() {
                 println!("  {} {}", color("🚀", "green"), color("Update available!", "green"));
                 println!();
                 
-                // Prompt user
-                print!("  Update now? [y/N] ");
-                io::stdout().flush().unwrap();
+                // On Windows, we can't do interactive updates because Windows locks running executables.
+                // Just show the command for user to copy/paste.
+                #[cfg(windows)]
+                {
+                    println!("  To update, run:");
+                    println!();
+                    println!("    {}", color("iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.ps1 | iex", "cyan"));
+                }
                 
-                let mut input = String::new();
-                if io::stdin().read_line(&mut input).is_ok() {
-                    let input = input.trim().to_lowercase();
-                    if input == "y" || input == "yes" {
-                        println!();
-                        println!("  {} Updating...", color("⏳", "blue"));
-                        println!();
-                        run_update();
-                    } else {
-                        println!();
-                        println!("  To update later, run:");
-                        println!();
-                        #[cfg(unix)]
-                        println!("    {}", color("curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | bash", "cyan"));
-                        #[cfg(windows)]
-                        println!("    {}", color("iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.ps1 | iex", "cyan"));
+                // On Unix, we can do interactive updates since the binary can be replaced while running
+                #[cfg(unix)]
+                {
+                    // Prompt user
+                    print!("  Update now? [y/N] ");
+                    io::stdout().flush().unwrap();
+                    
+                    let mut input = String::new();
+                    if io::stdin().read_line(&mut input).is_ok() {
+                        let input = input.trim().to_lowercase();
+                        if input == "y" || input == "yes" {
+                            println!();
+                            println!("  {} Updating...", color("⏳", "blue"));
+                            println!();
+                            run_update();
+                        } else {
+                            println!();
+                            println!("  To update later, run:");
+                            println!();
+                            println!("    {}", color("curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | bash", "cyan"));
+                        }
                     }
                 }
             } else {
