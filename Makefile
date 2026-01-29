@@ -13,6 +13,20 @@ install: build
 	@cp target/release/$(BINARY) $(INSTALL_DIR)/$(BINARY)
 	@echo "✓ Installed $(BINARY) to $(INSTALL_DIR)"
 
+# Clean reinstall - removes old binary, cleans db, rebuilds and installs
+reinstall:
+	@echo "🧹 Removing old binary..."
+	@rm -f $(INSTALL_DIR)/$(BINARY)
+	@rm -f /tmp/timer_cli.db
+	@echo "🔨 Building..."
+	@cargo build --release
+	@mkdir -p $(INSTALL_DIR)
+	@cp target/release/$(BINARY) $(INSTALL_DIR)/$(BINARY)
+	@echo "✓ Clean reinstall complete"
+	@echo ""
+	@echo "Run this to use immediately:"
+	@echo "  export PATH=\"$(INSTALL_DIR):\$$PATH\""
+
 # Install via cargo (adds to ~/.cargo/bin instead)
 cargo-install:
 	cargo install --path .

@@ -144,16 +144,16 @@ tt 10s -f                   # Short flag
 tt 10s --fg                 # Long flag
 ```
 
-### View History
+### View Logs
 
 ```bash
-# Show all timer history
-tt -h                       # Short flag
-tt --history                # Long flag
+# Show previous timer logs
+tt -l                       # Short flag
+tt --logs                   # Long flag
 
 # Show last N timers
-tt -h 5                     # Last 5 timers
-tt --history 10             # Last 10 timers
+tt -l 5                     # Last 5 timers
+tt --logs 10                # Last 10 timers
 ```
 
 ### Other Commands

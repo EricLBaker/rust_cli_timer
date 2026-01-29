@@ -133,7 +133,7 @@ cargo run -- 5s "Test timer"
 tt 5s "Test timer"
 
 # Test specific features
-tt -h              # History
+tt -l              # Logs/History
 tt -a              # Active timers
 tt -u              # Update check
 tt -v              # Version

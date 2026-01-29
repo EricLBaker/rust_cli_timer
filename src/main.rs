@@ -88,8 +88,8 @@ fn get_snooze_duration_and_str() -> (Duration, String) {
 /// Run a timer with:
 ///   timer_cli [--fg] <duration> [message]
 ///
-/// Show history with:
-///   timer_cli --history [COUNT] or timer_cli -h [COUNT]
+/// Show logs/history with:
+///   timer_cli --logs [COUNT] or timer_cli -l [COUNT]
 ///
 /// Show active timers with:
 ///   timer_cli --active or timer_cli -a
@@ -108,15 +108,15 @@ struct Args {
     #[arg(short = 'u', long)]
     update: bool,
 
-    /// Show the last N timer entries from history if provided (defaults to 10)
-    #[arg(short='h', long, value_name = "HISTORY", num_args = 0..=1, default_missing_value = "10")]
-    history: Option<usize>,
+    /// Show the last N timer entries from logs (defaults to 10)
+    #[arg(short = 'l', long = "logs", value_name = "COUNT", num_args = 0..=1, default_missing_value = "10")]
+    logs: Option<usize>,
 
     /// Show a live view of active timers.
     #[arg(short='a', long)]
     active: bool,
 
-    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --history or --active.
+    /// Duration string (e.g., "2s", "1min 30s", "90m"). Required if not using --logs or --active.
     duration: Option<String>,
 
     /// Optional message to include in the alarm popup.
@@ -597,8 +597,27 @@ fn show_active_timer_db() -> Result<()> {
         // Clear and draw UI
         let _ = execute!(stdout(), cursor::MoveTo(0, 0), terminal::Clear(terminal::ClearType::All));
         
-        println!("{}\r", color("Active Timers:", "gray"));
-        println!("{}\r", "-".repeat(60));
+        // Fixed column widths - message expands but capped for readability
+        let id_width = 4;       // "XX"
+        let dur_width = 5;      // "XXXm"
+        let time_width = 8;     // "HH:MM:SS"
+        let term_width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+        // Cap message width for readability, min 20, max 50
+        let message_width = term_width.saturating_sub(id_width + dur_width + time_width + 12).clamp(20, 50);
+        
+        // Print header
+        println!("{:>id_w$} | {:>dur_w$} | {:<msg_w$} | {:>time_w$}\r",
+            color("ID", "gray"),
+            color("Dur", "gray"),
+            color("Message", "gray"),
+            color("Left", "gray"),
+            id_w = id_width,
+            dur_w = dur_width,
+            msg_w = message_width,
+            time_w = time_width
+        );
+        let total_width = id_width + dur_width + message_width + time_width + 9;
+        println!("{}\r", "-".repeat(total_width));
 
         // Query active timers from the DB.
         let mut stmt = conn.prepare("SELECT id, pid, started, duration, message FROM active_timers ORDER BY id")?;
@@ -633,22 +652,37 @@ fn show_active_timer_db() -> Result<()> {
                     let hours = secs / 3600;
                     let minutes = (secs % 3600) / 60;
                     let seconds = secs % 60;
-                    let time_left_str = format!("\x1B[32m{:02}:{:02}:{:02}\x1B[0m", hours, minutes, seconds);
+                    let time_left_str = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
                     
-                    // Truncate message if too long
-                    let display_message = if message.len() > 30 {
-                        format!("{}...", &message[..27])
-                    } else {
-                        message.clone()
-                    };
+                    // Wrap message using textwrap
+                    use textwrap::{fill, Options};
+                    let wrapped_message = fill(message, Options::new(message_width));
+                    let message_lines: Vec<&str> = wrapped_message.lines().collect();
                     
+                    // First line with all columns
                     println!(
-                        "ID: {} | {} | {} | {}\r",
-                        color(&id.to_string(), "red"),
-                        color(duration_str, "pink"),
-                        color(&display_message, "purple"),
-                        time_left_str
+                        "{:<id_w$} | {:<dur_w$} | {:<msg_w$} | {}\r",
+                        color(&format!("{:>2}", id), "red"),
+                        color(&format!("{:>4}", duration_str), "pink"),
+                        color(message_lines.get(0).unwrap_or(&""), "purple"),
+                        color(&time_left_str, "green"),
+                        id_w = id_width,
+                        dur_w = dur_width,
+                        msg_w = message_width
                     );
+                    
+                    // Continuation lines
+                    for line in message_lines.iter().skip(1) {
+                        println!(
+                            "{:<id_w$} | {:<dur_w$} | {:<msg_w$} |\r",
+                            "",
+                            "",
+                            color(line, "purple"),
+                            id_w = id_width,
+                            dur_w = dur_width,
+                            msg_w = message_width
+                        );
+                    }
                 }
             }
         }
@@ -983,7 +1017,7 @@ fn main() {
         return;
     }
     
-    if let Some(count) = args.history {
+    if let Some(count) = args.logs {
         show_history_db(count).unwrap();
         return;
     }
@@ -992,7 +1026,7 @@ fn main() {
         return;
     }
     let duration_str = args.duration.unwrap_or_else(|| {
-        eprintln!("Duration string required unless using --history (-h), --active (-a), or --update (-u)");
+        eprintln!("Duration string required unless using --logs (-l), --active (-a), or --update (-u)");
         process::exit(1);
     });
     let duration = match parse_duration(&duration_str) {
