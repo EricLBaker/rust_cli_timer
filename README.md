@@ -1,4 +1,4 @@
-# Timer CLI
+# Terminal Timer (tt) CLI
 
 A fast, cross-platform command-line timer with notifications and sound alerts.
 

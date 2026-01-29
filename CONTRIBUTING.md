@@ -1,4 +1,4 @@
-# Contributing to Timer CLI
+# Contributing to Terminal Timer (tt) CLI
 
 ## Development Setup
 

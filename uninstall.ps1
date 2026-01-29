@@ -1,9 +1,9 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Timer CLI Uninstaller for Windows
+    Terminal Timer (tt) CLI Uninstaller for Windows
 .DESCRIPTION
-    Uninstalls Timer CLI from Windows.
+    Uninstalls Terminal Timer (tt) CLI from Windows.
 .EXAMPLE
     iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/uninstall.ps1 | iex
 .EXAMPLE
@@ -40,7 +40,7 @@ function Write-Info { param($Message) Write-Host "i " -ForegroundColor Blue -NoN
 
 function Show-Usage {
     @"
-Timer CLI Uninstaller for Windows
+Terminal Timer (tt) CLI Uninstaller for Windows
 
 Usage:
     iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/uninstall.ps1 | iex
@@ -186,7 +186,7 @@ function Main {
     }
     
     Write-Host ""
-    Write-Host "=== Timer CLI Uninstaller for Windows ===" -ForegroundColor Cyan
+    Write-Host "=== Terminal Timer (tt) CLI Uninstaller for Windows ===" -ForegroundColor Cyan
     Write-Host ""
     
     # Remove binary

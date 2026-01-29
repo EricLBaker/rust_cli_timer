@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Timer CLI Installer for macOS, Linux, and Windows (WSL/Git Bash)
+# Terminal Timer (tt) CLI Installer for macOS, Linux, and Windows (WSL/Git Bash)
 # Usage: curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | bash
 #
 # For native Windows (PowerShell):
@@ -218,7 +218,7 @@ add_alias_to_rc() {
         if ! grep -q 'alias tt=' "$rc" 2>/dev/null; then
             {
                 echo ""
-                echo "# Timer CLI shortcut"
+                echo "# Terminal Timer (tt) CLI shortcut"
                 echo "$alias_line"
             } >> "$rc"
             log_info "Added ${INFO}tt${NC} alias to ${INFO}$rc${NC}"
@@ -372,7 +372,7 @@ install_from_source() {
 # ============================================================================
 
 main() {
-    echo -e "${BOLD}🕐 Timer CLI Installer${NC}"
+    echo -e "${BOLD}🕐 Terminal Timer (tt) CLI Installer${NC}"
     echo ""
 
     # Detect platform
@@ -383,7 +383,7 @@ main() {
     mkdir -p "$INSTALL_DIR"
 
     # Add install directory to PATH in shell profiles
-    add_to_path_in_rc "$INSTALL_DIR" "Timer CLI"
+    add_to_path_in_rc "$INSTALL_DIR" "Terminal Timer (tt) CLI"
 
     # Try to install from release first
     local installed=0

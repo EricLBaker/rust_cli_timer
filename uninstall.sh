@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Timer CLI Uninstaller for macOS, Linux, and Windows (WSL/Git Bash)
+# Terminal Timer (tt) CLI Uninstaller for macOS, Linux, and Windows (WSL/Git Bash)
 # Usage: curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/uninstall.sh | bash
 #
 # For native Windows (PowerShell):
@@ -126,9 +126,9 @@ clean_shell_profiles() {
     
     for rc in "${rc_files[@]}"; do
         if [[ -f "$rc" ]]; then
-            # Remove Timer CLI PATH entry
+            # Remove Terminal Timer (tt) CLI PATH entry
             if grep -q "/.local/bin" "$rc" 2>/dev/null; then
-                remove_from_rc "$rc" '\.local/bin' "# Timer CLI"
+                remove_from_rc "$rc" '\.local/bin' "# Terminal Timer (tt) CLI"
             fi
             
             # Remove Cargo PATH entry (only if we installed it)
@@ -167,7 +167,7 @@ remove_rust() {
 # ============================================================================
 
 remove_app_data() {
-    # Timer CLI stores history in SQLite - check common locations
+    # Terminal Timer (tt) CLI stores history in SQLite - check common locations
     local data_locations=(
         "$HOME/.timer_cli"
         "$HOME/.local/share/timer_cli"
@@ -205,7 +205,7 @@ remove_app_data() {
 
 print_usage() {
     cat <<EOF
-Timer CLI Uninstaller
+Terminal Timer (tt) CLI Uninstaller
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/uninstall.sh | bash
@@ -253,7 +253,7 @@ parse_args() {
 # ============================================================================
 
 main() {
-    echo -e "${BOLD}🕐 Timer CLI Uninstaller${NC}"
+    echo -e "${BOLD}🕐 Terminal Timer (tt) CLI Uninstaller${NC}"
     echo ""
     
     detect_platform

@@ -1,9 +1,9 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Timer CLI Installer for Windows
+    Terminal Timer (tt) CLI Installer for Windows
 .DESCRIPTION
-    Installs Timer CLI on Windows. Downloads pre-built binary or builds from source if needed.
+    Installs Terminal Timer (tt) CLI on Windows. Downloads pre-built binary or builds from source if needed.
 .EXAMPLE
     iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.ps1 | iex
 .EXAMPLE
@@ -40,7 +40,7 @@ function Write-Info { param($Message) Write-Host "i " -ForegroundColor Blue -NoN
 
 function Show-Usage {
     @"
-Timer CLI Installer for Windows
+Terminal Timer (tt) CLI Installer for Windows
 
 Usage:
     iwr -useb https://raw.githubusercontent.com/$Script:Repo/main/install.ps1 | iex
@@ -229,7 +229,7 @@ function Add-Alias {
     # Add PATH entry if not present
     $pathLine = "`$env:Path = `"$Script:InstallDir;`$env:Path`""
     if ($content -notmatch [regex]::Escape($Script:InstallDir)) {
-        Add-Content -Path $profilePath -Value "`n# Timer CLI PATH`n$pathLine"
+        Add-Content -Path $profilePath -Value "`n# Terminal Timer (tt) CLI PATH`n$pathLine"
         Write-Info "Added $Script:InstallDir to PowerShell profile PATH"
         $modified = $true
     }
@@ -237,7 +237,7 @@ function Add-Alias {
     # Add alias if not present
     $aliasLine = "Set-Alias -Name tt -Value timer_cli"
     if ($content -notmatch 'Set-Alias.*tt.*timer_cli') {
-        Add-Content -Path $profilePath -Value "`n# Timer CLI shortcut`n$aliasLine"
+        Add-Content -Path $profilePath -Value "`n# Terminal Timer (tt) CLI shortcut`n$aliasLine"
         Write-Info "Added 'tt' alias to PowerShell profile"
         $modified = $true
     }
@@ -262,7 +262,7 @@ function Main {
     }
     
     Write-Host ""
-    Write-Host "=== Timer CLI Installer for Windows ===" -ForegroundColor Cyan
+    Write-Host "=== Terminal Timer (tt) CLI Installer for Windows ===" -ForegroundColor Cyan
     Write-Host ""
     
     $platform = Get-Platform
