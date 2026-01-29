@@ -262,7 +262,7 @@ function Main {
     }
     
     Write-Host ""
-    Write-Host "🕐 Timer CLI Installer for Windows" -ForegroundColor Cyan
+    Write-Host "=== Timer CLI Installer for Windows ===" -ForegroundColor Cyan
     Write-Host ""
     
     $platform = Get-Platform
@@ -304,7 +304,7 @@ function Main {
     Add-Alias
     
     Write-Host ""
-    Write-Host "✅ Installation complete!" -ForegroundColor Green
+    Write-Host "[OK] Installation complete!" -ForegroundColor Green
     Write-Host ""
     
     Write-Success "Ready to use! Try: tt 5s `"Hello`""

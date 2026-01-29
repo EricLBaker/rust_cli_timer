@@ -186,7 +186,7 @@ function Main {
     }
     
     Write-Host ""
-    Write-Host "🕐 Timer CLI Uninstaller for Windows" -ForegroundColor Cyan
+    Write-Host "=== Timer CLI Uninstaller for Windows ===" -ForegroundColor Cyan
     Write-Host ""
     
     # Remove binary
@@ -207,7 +207,7 @@ function Main {
     Remove-AppData -Force:$RemoveData
     
     Write-Host ""
-    Write-Host "✅ Uninstallation complete!" -ForegroundColor Green
+    Write-Host "[OK] Uninstallation complete!" -ForegroundColor Green
     Write-Host ""
     Write-Info "You may need to restart your terminal for PATH changes to take effect."
     
