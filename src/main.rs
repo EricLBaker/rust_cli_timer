@@ -92,8 +92,13 @@ fn get_snooze_duration_and_str() -> (Duration, String) {
 /// Show active timers with:
 ///   timer_cli --active or timer_cli -a
 #[derive(Parser)]
-#[command(author, version, about)]
+#[command(author, about, version)]
+#[command(disable_version_flag = true)]
 struct Args {
+    /// Print version information
+    #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
+    version: (),
+
     /// Show the last N timer entries from history if provided (defaults to 10)
     #[arg(short='h', long, value_name = "HISTORY", num_args = 0..=1, default_missing_value = "10")]
     history: Option<usize>,
@@ -696,39 +701,92 @@ fn main() {
         }
     };
     let popup_message = args.message.unwrap_or_else(|| "".to_string());
-    println!("Starting timer for {}...", duration_str);
+    
+    // Only print startup message if not a background child (to avoid double-printing)
+    if !args.background_child {
+        println!("Starting timer for {}...", duration_str);
+    }
 
     // If running in foreground, use the existing connection.
     if args.fg || args.background_child {
         let conn = init_db().expect("Failed to initialize database");
-        log_timer_creation_db(&conn, &duration_str, &popup_message, args.fg).unwrap();
+        // Only log to DB if not background child (parent already logged it)
+        if !args.background_child {
+            log_timer_creation_db(&conn, &duration_str, &popup_message, args.fg).unwrap();
+        }
         run_timer(duration, duration_str, popup_message.clone(), args.fg);
     } else {
+        // Log timer creation from parent before spawning
+        let conn = init_db().expect("Failed to initialize database");
+        log_timer_creation_db(&conn, &duration_str, &popup_message, false).unwrap();
+        
         // Background mode: spawn a detached child process (cross-platform)
         let exe = std::env::current_exe().expect("Failed to get current executable path");
-        let mut cmd = Command::new(exe);
-        cmd.arg(&duration_str)
-           .arg("--background-child");
         
-        if !popup_message.is_empty() {
-            cmd.arg(&popup_message);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            use std::fs::File;
+            
+            let dev_null = File::open("/dev/null").expect("Failed to open /dev/null");
+            let dev_null_out = File::create("/dev/null").expect("Failed to open /dev/null for writing");
+            let dev_null_err = File::create("/dev/null").expect("Failed to open /dev/null for writing");
+            
+            let mut cmd = Command::new(&exe);
+            cmd.arg(&duration_str)
+               .arg("--background-child")
+               .stdin(dev_null)
+               .stdout(dev_null_out)
+               .stderr(dev_null_err);
+            
+            if !popup_message.is_empty() {
+                cmd.arg(&popup_message);
+            }
+            
+            // Create a new session to fully detach from terminal
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+            
+            match cmd.spawn() {
+                Ok(_) => {
+                    println!("Timer started in background.");
+                }
+                Err(e) => {
+                    eprintln!("Error spawning background process: {}", e);
+                    process::exit(1);
+                }
+            }
         }
-
-        // On Windows, hide the console window
+        
         #[cfg(windows)]
-        let cmd = {
+        {
+            let mut cmd = Command::new(&exe);
+            cmd.arg(&duration_str)
+               .arg("--background-child")
+               .stdout(std::process::Stdio::null())
+               .stderr(std::process::Stdio::null())
+               .stdin(std::process::Stdio::null());
+            
+            if !popup_message.is_empty() {
+                cmd.arg(&popup_message);
+            }
+            
             const DETACHED_PROCESS: u32 = 0x00000008;
             const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
-        };
-
-        match cmd.spawn() {
-            Ok(_) => {
-                println!("Timer started in background.");
-            }
-            Err(e) => {
-                eprintln!("Error spawning background process: {}", e);
-                process::exit(1);
+            cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+            
+            match cmd.spawn() {
+                Ok(_) => {
+                    println!("Timer started in background.");
+                }
+                Err(e) => {
+                    eprintln!("Error spawning background process: {}", e);
+                    process::exit(1);
+                }
             }
         }
     }

@@ -198,6 +198,36 @@ refresh_path() {
     export PATH="$INSTALL_DIR:$CARGO_BIN:$PATH"
 }
 
+add_alias_to_rc() {
+    local alias_line="alias tt=\"timer_cli\""
+    
+    # Files to update
+    local rc_files=("$HOME/.bashrc")
+    
+    if [[ "$OS" == "macos" ]] || [[ -f "$HOME/.zshrc" ]]; then
+        rc_files+=("$HOME/.zshrc")
+    fi
+    
+    for rc in "${rc_files[@]}"; do
+        if [[ ! -f "$rc" ]]; then
+            touch "$rc"
+        fi
+        
+        # Only add if not already present
+        if ! grep -q 'alias tt=' "$rc" 2>/dev/null; then
+            {
+                echo ""
+                echo "# Timer CLI shortcut"
+                echo "$alias_line"
+            } >> "$rc"
+            log_info "Added ${INFO}tt${NC} alias to ${INFO}$rc${NC}"
+        fi
+    done
+    
+    # Also set for current session
+    alias tt="timer_cli"
+}
+
 # ============================================================================
 # Homebrew (macOS)
 # ============================================================================
@@ -394,6 +424,9 @@ main() {
     # Refresh PATH for current session
     refresh_path
 
+    # Add tt alias to shell profiles
+    add_alias_to_rc
+
     # Final success message
     echo ""
     echo -e "${SUCCESS}${BOLD}✅ Installation complete!${NC}"
@@ -401,11 +434,10 @@ main() {
     
     # Verify installation
     if command -v "$BINARY_NAME" &> /dev/null; then
-        log_success "Ready to use! Run ${INFO}${BINARY_NAME} --help${NC} to get started."
+        log_success "Ready to use! Try ${INFO}tt 5s \"Hello\"${NC} to test."
     else
         # Might need a new shell for PATH changes
-        log_info "Run ${INFO}source ~/.bashrc${NC} or open a new terminal, then:"
-        echo -e "     ${INFO}${BINARY_NAME} --help${NC}"
+        log_info "Open a new terminal, then try: ${INFO}tt 5s \"Hello\"${NC}"
     fi
     
     echo ""

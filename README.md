@@ -1,112 +1,181 @@
 # Timer CLI
 
-Timer CLI is a lightweight command-line tool written in Rust that lets you set timers with custom durations and messages. When a timer finishes, a pop-up notification appears with your message and a looping sound is played. Timer events are logged to a history file for later review.
-
-## Supported Platforms
-
-| Platform                         | Status             | Audio Support |
-| -------------------------------- | ------------------ | ------------- |
-| 🍎 macOS (Intel & Apple Silicon) | ✅ Fully supported | ✅ Built-in   |
-| 🪟 Windows                       | ✅ Fully supported | ✅ Built-in   |
-| 🐧 Linux                         | ✅ Fully supported | ✅ Built-in   |
-
-## Features
-
-- **Custom Duration:** Specify durations (e.g., `2s`, `1min 30s`) for your timers.
-- **Custom Message:** Include an optional message to display in the pop-up when the timer finishes.
-- **Foreground/Background Mode:** Run timers in the foreground or as a daemon (background) so your terminal remains free.
-- **History Logging:** Timer events are logged (timestamp, duration, message, background flag) to a history file.
-- **View History:** Display the last _N_ timer events using the `--history` flag (defaults to 20 if omitted).
-- **Custom Notification Image:** _Note:_ Timer CLI currently uses `native_dialog` for its pop-up notifications, which does not support changing the image at the top of the dialog. To display a custom image, consider using a more advanced GUI library (e.g., GTK or egui) and updating the code accordingly.
-
-## Installation
-
-### Quick Install (Recommended)
-
-**macOS / Linux:**
+A fast, cross-platform command-line timer with notifications and sound alerts.
 
 ```bash
-curl -sSf https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | sh
+tt 5m "Take a break"
 ```
 
-**Windows:**
-Download `timer_cli-windows-x86_64.exe` from the [Releases page](https://github.com/EricLBaker/rust_cli_timer/releases) and add it to your PATH.
+<br>
 
-### Install from Source
+## Install
+
+**macOS / Linux / WSL:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.ps1 | iex
+```
+
+The installer automatically:
+
+- Downloads the binary (or builds from source if needed)
+- Adds it to your PATH
+- Creates the `tt` alias
+
+<details>
+<summary>Uninstall</summary>
+
+**macOS / Linux / WSL:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/uninstall.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/uninstall.ps1 | iex
+```
+
+</details>
+
+<details>
+<summary>Build from source</summary>
 
 Requires [Rust](https://rustup.rs/):
 
 ```bash
-git clone <repository_url>
-cd timer_cli
-cargo install --path .
+cargo install --git https://github.com/EricLBaker/rust_cli_timer.git
 ```
 
-Ensure that your Cargo bin directory is in your PATH. If it’s not, add the following line to your `~/.zshrc`, `~/.bashrc`:
+</details>
 
-```bash
-export PATH="$HOME/.cargo/bin:$PATH"
+<br>
 
-# Add this for a more concise shortcut
-alias tt="timer_cli"
-```
+## Platforms
 
-Then reload your shell:
+| Platform                         | Status       |
+| -------------------------------- | ------------ |
+| 🍎 macOS (Intel & Apple Silicon) | ✅ Supported |
+| 🪟 Windows                       | ✅ Supported |
+| 🐧 Linux                         | ✅ Supported |
 
-```bash
-source ~/.zshrc
-```
+<br>
+
+## Features
+
+| Feature               | Description                      |
+| --------------------- | -------------------------------- |
+| ⏱️ Flexible durations | `30s`, `5m`, `1h30m`, `2h15m30s` |
+| 💬 Custom messages    | Optional notification text       |
+| 🔔 Sound alerts       | Looping alarm until dismissed    |
+| 📋 History log        | Look back through your timers    |
+| 🖥️ Background mode    | Default - doesn't block terminal |
+| 👁️ Foreground mode    | Shows live countdown             |
+
+<br>
+
+## Timer Popup
+
+When a timer finishes, a popup window appears with your message and a looping sound alert:
+
+<img src="https://github.com/EricLBaker/rust_cli_timer/raw/main/assets/popup.png" width="400" alt="Timer popup window">
+
+### Keyboard Shortcuts
+
+| Key | Action  | Description                                                   |
+| --- | ------- | ------------------------------------------------------------- |
+| `z` | Snooze  | Snooze for 5 minutes (configurable via `SNOOZE_TIME` env var) |
+| `r` | Restart | Restart the timer with the original duration                  |
+| `s` | Stop    | Dismiss the timer and stop the alarm                          |
+
+> [!TIP]
+> Set a custom snooze duration with the `SNOOZE_TIME` environment variable:
+>
+> ```bash
+> export SNOOZE_TIME="10m"  # Snooze for 10 minutes instead of 5
+> ```
+
+<br>
 
 ## Usage
 
-### Starting a Timer
-
-Run a timer with a duration and an optional message:
+### Start a Timer
 
 ```bash
-# Run a 4-second timer with the message "Test Timer"
-timer_cli 4s "Test Timer"
+# Basic timer
+tt 30s                      # 30 seconds
+tt 5m                       # 5 minutes
+tt 1h30m                    # 1 hour 30 minutes
+
+# With a message
+tt 25m "Focus time"         # Shows message in notification
+
+# Foreground mode (blocks terminal, shows countdown)
+tt 10s -f                   # Short flag
+tt 10s --fg                 # Long flag
 ```
 
-Run a timer in foreground mode:
+### View History
 
 ```bash
-# Run a 4-second timer in foreground mode
-timer_cli 4s "Test Timer" --fg
+# Show all timer history
+tt -h                       # Short flag
+tt --history                # Long flag
+
+# Show last N timers
+tt -h 5                     # Last 5 timers
+tt --history 10             # Last 10 timers
 ```
 
-You can run multiple timers concurrently (in background mode they daemonize):
+### Other Commands
 
 ```bash
-timer_cli 4s "Eat2" --fg && timer_cli 7s "Eat3" --fg && timer_cli 10s "Eat1" --fg
+# Show version
+tt -v                       # Short flag
+tt --version                # Long flag
+
+# Live timer view (foreground)
+tt -a                       # Short flag
+tt --active                 # Long flag
 ```
 
-### Viewing Timer History
-
-View the last 20 timer events (default):
+### Examples
 
 ```bash
-timer_cli --history
+# Pomodoro technique (foreground mode so they run sequentially)
+tt 25m "Work session" -f && tt 5m "Break time" -f
+
+# Cooking timers
+tt 3m "Check branch deploy" -f
+tt 45m "Check if pipeline finished"
+
+# Quick reminder
+tt 1h "Stand up and stretch"
 ```
 
-Or view a different number of entries (e.g., last 5):
-
-```bash
-timer_cli --history 5
-```
-
-## Logging
-
-Timer events are logged to `/tmp/timer_cli_history.log`. Each log entry contains:
-
-```
-YYYY-MM-DD HH:MM:SS | Duration: <duration> | Message: <message> | Background: <true/false>
-```
-
-## Custom Notification Image
-
-_Note:_ Timer CLI currently uses `native_dialog` for its pop-up notifications, which does not support changing the image at the top of the dialog.
+> [!TIP]
+> Custom Aliases
+>
+> Add these to your `~/.zshrc` or `~/.bashrc` for quick shortcuts:
+>
+> ```bash
+> # Pomodoro technique - 25min work, 5min break
+> alias pom='tt 25m "Work session" -f && tt 5m "Break time" -f'
+>
+> # Long pomodoro - 50min work, 10min break
+> alias lpom='tt 50m "Deep work" -f && tt 10m "Long break" -f'
+>
+> # Quick breaks
+> alias stretch='tt 1h "Stand up and stretch"'
+> ```
 
 ## License
 
-This project is licensed under the MIT License.
+MIT

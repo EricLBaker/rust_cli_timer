@@ -203,6 +203,34 @@ function Install-FromSource {
     Write-Success "Built and installed via Cargo"
 }
 
+function Add-Alias {
+    # Add tt alias to PowerShell profile
+    $profilePath = $PROFILE.CurrentUserAllHosts
+    $profileDir = Split-Path $profilePath -Parent
+    
+    # Create profile directory if needed
+    if (-not (Test-Path $profileDir)) {
+        New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+    }
+    
+    # Create profile if needed
+    if (-not (Test-Path $profilePath)) {
+        New-Item -ItemType File -Path $profilePath -Force | Out-Null
+    }
+    
+    $aliasLine = "Set-Alias -Name tt -Value timer_cli"
+    
+    # Only add if not already present
+    $content = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+    if ($content -notmatch 'Set-Alias.*tt.*timer_cli') {
+        Add-Content -Path $profilePath -Value "`n# Timer CLI shortcut`n$aliasLine"
+        Write-Info "Added 'tt' alias to PowerShell profile"
+    }
+    
+    # Set for current session
+    Set-Alias -Name tt -Value timer_cli -Scope Global
+}
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -252,18 +280,15 @@ function Main {
         Install-FromSource
     }
     
+    # Add tt alias
+    Add-Alias
+    
     Write-Host ""
     Write-Host "✅ Installation complete!" -ForegroundColor Green
     Write-Host ""
     
-    # Verify installation
-    $binaryPath = Join-Path $Script:InstallDir "$Script:BinaryName.exe"
-    $cargoBinaryPath = Join-Path $Script:CargoBin "$Script:BinaryName.exe"
-    
-    if ((Test-Path $binaryPath) -or (Test-Path $cargoBinaryPath)) {
-        Write-Success "Ready to use! Run '$Script:BinaryName --help' to get started."
-        Write-Info "You may need to restart your terminal for PATH changes to take effect."
-    }
+    Write-Success "Ready to use! Try: tt 5s `"Hello`""
+    Write-Info "You may need to restart your terminal for changes to take effect."
     
     Write-Host ""
     Write-Host "Documentation: https://github.com/$Script:Repo#readme" -ForegroundColor Cyan
