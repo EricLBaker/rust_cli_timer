@@ -12,6 +12,7 @@ clap = { version = "4.1", features = ["derive"] }
 humantime = "2.1"
 native-dialog = "0.7.0"
 chrono = "0.4"
+ureq = { version = "2.9", features = ["native-tls"] }
 
 # Audio support: enabled by default on macOS/Windows, optional on Linux
 # Linux users can enable with: cargo build --features audio (requires libasound2-dev)

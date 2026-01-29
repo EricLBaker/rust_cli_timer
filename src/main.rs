@@ -322,48 +322,48 @@ fn check_for_updates() {
     println!();
 }
 
-/// Fetch the latest version tag from GitHub API
+/// Fetch the latest version tag from GitHub API using native HTTP
 fn fetch_latest_version() -> Option<String> {
-    // Use curl/wget on Unix, PowerShell on Windows
-    #[cfg(unix)]
+    let response = match ureq::get("https://api.github.com/repos/EricLBaker/rust_cli_timer/releases/latest")
+        .set("User-Agent", "timer_cli")
+        .call() 
     {
-        let output = std::process::Command::new("curl")
-            .args(["-s", "-f", "https://api.github.com/repos/EricLBaker/rust_cli_timer/releases/latest"])
-            .output()
-            .ok()?;
-        
-        if !output.status.success() {
+        Ok(r) => r,
+        Err(_e) => {
             return None;
         }
-        
-        let body = String::from_utf8_lossy(&output.stdout);
-        // Simple JSON parsing for "tag_name": "vX.Y.Z"
-        for line in body.lines() {
-            if line.contains("\"tag_name\"") {
-                if let Some(start) = line.find(": \"") {
-                    let rest = &line[start + 3..];
-                    if let Some(end) = rest.find('"') {
-                        return Some(rest[..end].to_string());
-                    }
+    };
+    
+    let body = match response.into_string() {
+        Ok(b) => b,
+        Err(_) => return None,
+    };
+    
+    // Simple JSON parsing for "tag_name": "vX.Y.Z"
+    for line in body.lines() {
+        if line.contains("\"tag_name\"") {
+            if let Some(start) = line.find(": \"") {
+                let rest = &line[start + 3..];
+                if let Some(end) = rest.find('"') {
+                    return Some(rest[..end].to_string());
                 }
             }
         }
-        None
     }
-    
-    #[cfg(windows)]
-    {
-        let output = std::process::Command::new("powershell")
-            .args(["-Command", "(Invoke-RestMethod -Uri 'https://api.github.com/repos/EricLBaker/rust_cli_timer/releases/latest').tag_name"])
-            .output()
-            .ok()?;
-        
-        if !output.status.success() {
-            return None;
+    // Also try single-line JSON format
+    if let Some(start) = body.find("\"tag_name\":\"") {
+        let rest = &body[start + 12..];
+        if let Some(end) = rest.find('"') {
+            return Some(rest[..end].to_string());
         }
-        
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
+    if let Some(start) = body.find("\"tag_name\": \"") {
+        let rest = &body[start + 13..];
+        if let Some(end) = rest.find('"') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    None
 }
 
 /// Compare semantic versions (returns true if latest > current)

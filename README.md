@@ -80,6 +80,7 @@ cargo install --git https://github.com/EricLBaker/rust_cli_timer.git
 | 📋 History log        | Look back through your timers    |
 | 🖥️ Background mode    | Default - doesn't block terminal |
 | 👁️ Foreground mode    | Shows live countdown             |
+| 🔄 Update check       | Check for new versions with `-u` |
 
 <br>
 
@@ -143,9 +144,14 @@ tt --history 10             # Last 10 timers
 tt -v                       # Short flag
 tt --version                # Long flag
 
-# Live timer view (foreground)
+# Check for updates
+tt -u                       # Short flag
+tt --update                 # Long flag
+
+# View and manage active timers
 tt -a                       # Short flag
 tt --active                 # Long flag
+# In active view: type timer ID to kill it, 'all' to kill all, Ctrl+C to exit
 ```
 
 ### Examples
@@ -179,6 +185,24 @@ tt 1h "Stand up and stretch"
 > # Quick breaks
 > alias stretch='tt 1h "Stand up and stretch"'
 > ```
+
+<br>
+
+## Updating
+
+Check if a new version is available:
+
+```bash
+tt -u
+```
+
+To update, re-run the install command for your platform.
+
+<br>
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, build instructions, and release process.
 
 <br>
 
