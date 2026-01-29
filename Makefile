@@ -1,6 +1,9 @@
 INSTALL_DIR := $(HOME)/.local/bin
 BINARY := timer_cli
 
+# Get current version from Cargo.toml
+VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+
 build:
 	cargo build --release
 
@@ -21,6 +24,40 @@ upgrade:
 clean:
 	rm -f /tmp/timer_cli.db
 
+# Show current version
+version:
+	@echo "Current version: $(VERSION)"
+
+# Bump patch version (1.0.0 -> 1.0.1)
+bump-patch:
+	@./scripts/bump-version.sh patch
+
+# Bump minor version (1.0.0 -> 1.1.0)
+bump-minor:
+	@./scripts/bump-version.sh minor
+
+# Bump major version (1.0.0 -> 2.0.0)
+bump-major:
+	@./scripts/bump-version.sh major
+
+# Release with automatic version bump
+# Usage: make release-patch  OR  make release-minor  OR  make release-major
+release-patch: bump-patch release-current
+release-minor: bump-minor release-current
+release-major: bump-major release-current
+
+# Release current version (after manual or scripted version bump)
+release-current:
+	@NEW_VERSION=$$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/'); \
+	echo "📦 Releasing v$$NEW_VERSION..."; \
+	git add Cargo.toml Cargo.lock; \
+	git commit -m "chore: bump version to $$NEW_VERSION" || true; \
+	git tag -a "v$$NEW_VERSION" -m "Release v$$NEW_VERSION"; \
+	git push origin main; \
+	git push origin "v$$NEW_VERSION"; \
+	echo "✓ Released v$$NEW_VERSION"
+
+# Legacy release (manual version)
 release:
 	git checkout main
 	git pull origin main
