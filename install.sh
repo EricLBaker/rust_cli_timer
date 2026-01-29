@@ -301,8 +301,9 @@ get_latest_version() {
     # Try GitHub API
     if download_file "https://api.github.com/repos/$REPO/releases/latest" "$tmp_file" 2>/dev/null; then
         local tag
-        tag=$(grep '"tag_name":' "$tmp_file" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' | head -n1)
-        if [[ -n "$tag" ]]; then
+        # Look specifically for "tag_name": "vX.Y.Z" and extract the version
+        tag=$(grep '"tag_name":' "$tmp_file" 2>/dev/null | head -n1 | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')
+        if [[ -n "$tag" && "$tag" =~ ^v[0-9] ]]; then
             echo "$tag"
             return 0
         fi
@@ -311,7 +312,7 @@ get_latest_version() {
     # Fallback: scrape releases page
     if download_file "https://github.com/$REPO/releases" "$tmp_file" 2>/dev/null; then
         local tag
-        tag=$(grep -oE "/releases/tag/[^\"']+" "$tmp_file" 2>/dev/null | head -n1 | sed 's|/releases/tag/||')
+        tag=$(grep -oE "/releases/tag/v[0-9][^\"']+" "$tmp_file" 2>/dev/null | head -n1 | sed 's|/releases/tag/||')
         if [[ -n "$tag" ]]; then
             echo "$tag"
             return 0
