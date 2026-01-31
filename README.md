@@ -6,7 +6,7 @@ A fast, cross-platform command-line timer with notifications and sound alerts.
 tt 5m "Take a break"
 ```
 
-<img src="https://github.com/EricLBaker/rust_cli_timer/raw/main/assets/terminal_timer_output.png" width="350" alt="Timer started output">
+<img src="https://github.com/EricLBaker/rust_cli_timer/raw/main/assets/tt_output_pomodoro.png" width="350" alt="Timer started output">
 
 <br>
 
@@ -111,18 +111,14 @@ When a timer finishes, a popup window appears with your message and a looping so
 
 ### Keyboard Shortcuts
 
-| Key | Action  | Description                                                   |
-| --- | ------- | ------------------------------------------------------------- |
-| `z` | Snooze  | Snooze for 5 minutes (configurable via `SNOOZE_TIME` env var) |
-| `r` | Restart | Restart the timer with the original duration                  |
-| `s` | Stop    | Dismiss the timer and stop the alarm                          |
+| Key | Action  | Description                          |
+| --- | ------- | ------------------------------------ |
+| `z` | Snooze  | Snooze (default 5 min, configurable) |
+| `r` | Restart | Restart with the original duration   |
+| `s` | Stop    | Dismiss the timer and stop the alarm |
 
 > [!TIP]
-> Set a custom snooze duration with the `SNOOZE_TIME` environment variable:
->
-> ```bash
-> export SNOOZE_TIME="10m"  # Snooze for 10 minutes instead of 5
-> ```
+> All keys and durations are configurable via environment variables. See [Environment Variables](#environment-variables) below.
 
 <br>
 
@@ -204,6 +200,47 @@ tt 1h "Stand up and stretch"
 > # Quick breaks
 > alias stretch='tt 1h "Stand up and stretch"'
 > ```
+
+<br>
+
+## Environment Variables
+
+Customize timer behavior by setting these environment variables in your shell configuration (`~/.zshrc`, `~/.bashrc`, etc.):
+
+| Variable              | Default  | Description                             |
+| --------------------- | -------- | --------------------------------------- |
+| `TT_SNOOZE_TIME`      | `5m`     | Duration for snooze (e.g., `10m`, `1h`) |
+| `TT_DEFAULT_DURATION` | —        | Default timer if no duration specified  |
+| `TT_KEY_SNOOZE`       | `z`      | Key to trigger snooze action            |
+| `TT_KEY_RESTART`      | `r`      | Key to restart the timer                |
+| `TT_KEY_STOP`         | `s`      | Key to stop/dismiss the timer           |
+| `TT_COLOR_HEADER`     | `green`  | Color for timer icon & duration         |
+| `TT_COLOR_MESSAGE`    | `purple` | Color for message text                  |
+| `TT_COLOR_TIME`       | `gray`   | Color for time range display            |
+
+Available colors: `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `orange`, `purple`, `pink`, `gray`, `white`
+
+### Examples
+
+```bash
+# Add to ~/.zshrc or ~/.bashrc
+
+# Set snooze to 10 minutes instead of 5
+export TT_SNOOZE_TIME="10m"
+
+# Default to 25-minute pomodoro if no duration given
+export TT_DEFAULT_DURATION="25m"
+
+# Use vim-style keys: j=snooze, k=restart, l=stop
+export TT_KEY_SNOOZE="j"
+export TT_KEY_RESTART="k"
+export TT_KEY_STOP="l"
+
+# Custom color scheme
+export TT_COLOR_HEADER="pink"
+export TT_COLOR_MESSAGE="blue"
+export TT_COLOR_TIME="purple"
+```
 
 <br>
 

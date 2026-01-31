@@ -67,10 +67,10 @@ fn styled_button_label(shortcut: &str, color: Color32, label: &str) -> WidgetTex
     WidgetText::from(job)
 }
 
-/// Returns the snooze duration and the original string from the SNOOZE_TIME environment variable.
-/// If SNOOZE_TIME is not set or cannot be parsed, it defaults to 5 minutes ("5m").
+/// Returns the snooze duration and the original string from the TT_SNOOZE_TIME environment variable.
+/// If TT_SNOOZE_TIME is not set or cannot be parsed, it defaults to 5 minutes ("5m").
 fn get_snooze_duration_and_str() -> (Duration, String) {
-    if let Ok(s) = std::env::var("SNOOZE_TIME") {
+    if let Ok(s) = std::env::var("TT_SNOOZE_TIME") {
         if let Ok(dur) = parse_duration(&s) {
             (dur, s)
         } else {
@@ -81,6 +81,51 @@ fn get_snooze_duration_and_str() -> (Duration, String) {
         let default = Duration::from_secs_f64(5.0 * 60.0);
         (default, "5m".to_string())
     }
+}
+
+/// Get configured key for an action from environment variable, with fallback default
+fn get_action_key(env_var: &str, default: egui::Key) -> egui::Key {
+    if let Ok(key_str) = std::env::var(env_var) {
+        match key_str.to_lowercase().chars().next() {
+            Some('a') => egui::Key::A,
+            Some('b') => egui::Key::B,
+            Some('c') => egui::Key::C,
+            Some('d') => egui::Key::D,
+            Some('e') => egui::Key::E,
+            Some('f') => egui::Key::F,
+            Some('g') => egui::Key::G,
+            Some('h') => egui::Key::H,
+            Some('i') => egui::Key::I,
+            Some('j') => egui::Key::J,
+            Some('k') => egui::Key::K,
+            Some('l') => egui::Key::L,
+            Some('m') => egui::Key::M,
+            Some('n') => egui::Key::N,
+            Some('o') => egui::Key::O,
+            Some('p') => egui::Key::P,
+            Some('q') => egui::Key::Q,
+            Some('r') => egui::Key::R,
+            Some('s') => egui::Key::S,
+            Some('t') => egui::Key::T,
+            Some('u') => egui::Key::U,
+            Some('v') => egui::Key::V,
+            Some('w') => egui::Key::W,
+            Some('x') => egui::Key::X,
+            Some('y') => egui::Key::Y,
+            Some('z') => egui::Key::Z,
+            _ => default,
+        }
+    } else {
+        default
+    }
+}
+
+/// Get the key character for display in UI
+fn get_action_key_char(env_var: &str, default: char) -> char {
+    std::env::var(env_var)
+        .ok()
+        .and_then(|s| s.to_lowercase().chars().next())
+        .unwrap_or(default)
 }
 
 /// CLI timer that can either run a timer, show history, or a live view of active timers.
@@ -503,11 +548,30 @@ fn color(text: &str, name: &str) -> String {
         "orange"  => 215,
         "purple"  => 183,
         "pink"    => 218,
-        "gray"    => 250,
+        "gray"    => 240,
         "white"   => 255,
         _ => 15,
     };
     format!("\x1B[38;5;{}m{}\x1B[0m", code, text)
+}
+
+/// Gets a color name from env var, falling back to default
+fn get_env_color(env_var: &str, default: &str) -> String {
+    std::env::var(env_var).unwrap_or_else(|_| default.to_string())
+}
+
+/// Centers a string within a given width, accounting for unicode display width
+fn center_display_width(s: &str, width: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+    let current_width = UnicodeWidthStr::width(s);
+    if current_width >= width {
+        s.to_string()
+    } else {
+        let total_padding = width - current_width;
+        let left_padding = total_padding / 2;
+        let right_padding = total_padding - left_padding;
+        format!("{}{}{}", " ".repeat(left_padding), s, " ".repeat(right_padding))
+    }
 }
 
 /// Pads a string to a specific display width, accounting for unicode/emoji widths
@@ -521,54 +585,95 @@ fn pad_display_width(s: &str, width: usize) -> String {
     }
 }
 
-/// Prints a fancy box for timer creation with Tokyo Night colors
-fn print_timer_started_box(duration: &str, message: &str, end_time: &str, is_background: bool) {
-    let mode_str = if is_background { "Background 🌙" } else { "Foreground 👁" };
-    let inner_width = 36;
-    let label_width = 12; // "⏳ Duration:" etc
-    let value_width = inner_width - label_width - 4; // 4 for "│  " and " │"
+/// Prints a fancy box for timer creation with Tokyo Night colors (Option D layout)
+/// Colors configurable via: TT_COLOR_HEADER, TT_COLOR_MESSAGE, TT_COLOR_TIME
+fn print_timer_started_box(duration: &str, message: &str, start_time: &str, end_time: &str, _is_background: bool) {
+    use unicode_width::UnicodeWidthStr;
+    
+    // Get colors from env vars with defaults
+    let header_color = get_env_color("TT_COLOR_HEADER", "green");
+    let message_color = get_env_color("TT_COLOR_MESSAGE", "purple");
+    let time_color = get_env_color("TT_COLOR_TIME", "gray");
+    
+    let min_inner_width = 32;
+    let max_inner_width = 50; // Cap the width for readability
+    
+    // Build content to measure
+    let header_content = format!("⏱  {}", duration);
+    let time_content = format!("{} → {}", start_time, end_time);
+    let msg_with_quotes = if !message.is_empty() {
+        format!("\"{}\"", message)
+    } else {
+        String::new()
+    };
+    
+    // Calculate required width based on content
+    let header_width = UnicodeWidthStr::width(header_content.as_str());
+    let time_width = UnicodeWidthStr::width(time_content.as_str());
+    let msg_width = UnicodeWidthStr::width(msg_with_quotes.as_str());
+    
+    // Determine box width: fit content but stay within bounds
+    let content_max = header_width.max(time_width).max(msg_width);
+    let inner_width = (content_max + 6).clamp(min_inner_width, max_inner_width);
+    
+    // Wrap message if it exceeds inner width
+    let max_msg_width = inner_width - 4; // Leave padding on sides
+    let wrapped_lines: Vec<String> = if !message.is_empty() {
+        if msg_width <= max_msg_width {
+            vec![msg_with_quotes]
+        } else {
+            // Wrap message text, add quote at start of first line and end of last line only
+            let wrap_width = max_msg_width - 2; // Account for quotes
+            let lines: Vec<_> = textwrap::wrap(message, wrap_width).iter().map(|s| s.to_string()).collect();
+            let num_lines = lines.len();
+            lines.iter()
+                .enumerate()
+                .map(|(i, line)| {
+                    if num_lines == 1 {
+                        format!("\"{}\"", line)
+                    } else if i == 0 {
+                        format!("\"{}  ", line)  // Opening quote, pad end
+                    } else if i == num_lines - 1 {
+                        format!("  {}\"", line)  // Closing quote, pad start
+                    } else {
+                        format!("  {}  ", line)  // Middle lines, pad both
+                    }
+                })
+                .collect()
+        }
+    } else {
+        vec![]
+    };
     
     // Top border
     println!("  ╭{}╮", "─".repeat(inner_width));
     
-    // Header
-    let header = "⏱  Timer Started";
-    let header_padded = pad_display_width(header, inner_width - 2);
-    println!("  │ {} │", color(&header_padded, "green"));
+    // Header row: centered "⏱  25m" in green
+    let header_centered = center_display_width(&header_content, inner_width - 2);
+    println!("  │ {} │", color(&header_centered, &header_color));
     
     // Separator
     println!("  ├{}┤", "─".repeat(inner_width));
     
-    // Duration row
-    let dur_val = pad_display_width(duration, value_width);
-    let dur_line = format!("⏳ Duration:  {}", color(&dur_val, "pink"));
-    let dur_padded = pad_display_width(&dur_line, inner_width - 2 + 11); // +11 for ANSI codes
-    println!("  │ {} │", dur_padded);
+    // Empty line for breathing room
+    println!("  │ {} │", " ".repeat(inner_width - 2));
     
-    // Message row (only if message exists)
-    if !message.is_empty() {
-        let display_msg = if message.len() > value_width {
-            format!("{}...", &message[..value_width - 3])
-        } else {
-            message.to_string()
-        };
-        let msg_val = pad_display_width(&display_msg, value_width);
-        let msg_line = format!("💬 Message:   {}", color(&msg_val, "purple"));
-        let msg_padded = pad_display_width(&msg_line, inner_width - 2 + 11);
-        println!("  │ {} │", msg_padded);
+    // Message rows (only if message exists)
+    if !wrapped_lines.is_empty() {
+        for line in &wrapped_lines {
+            let msg_centered = center_display_width(line, inner_width - 2);
+            println!("  │ {} │", color(&msg_centered, &message_color));
+        }
+        // Small space between message and time
+        println!("  │ {} │", " ".repeat(inner_width - 2));
     }
     
-    // Ends at row
-    let end_val = pad_display_width(end_time, value_width);
-    let end_line = format!("🔔 Ends at:   {}", color(&end_val, "blue"));
-    let end_padded = pad_display_width(&end_line, inner_width - 2 + 11);
-    println!("  │ {} │", end_padded);
+    // Time range row: centered "2:00 PM → 2:25 PM" in gray
+    let time_centered = center_display_width(&time_content, inner_width - 2);
+    println!("  │ {} │", color(&time_centered, &time_color));
     
-    // Status row
-    let status_val = pad_display_width(mode_str, value_width);
-    let status_line = format!("🚀 Status:    {}", color(&status_val, "gray"));
-    let status_padded = pad_display_width(&status_line, inner_width - 2 + 11);
-    println!("  │ {} │", status_padded);
+    // Empty line for breathing room
+    println!("  │ {} │", " ".repeat(inner_width - 2));
     
     // Bottom border
     println!("  ╰{}╯", "─".repeat(inner_width));
@@ -850,18 +955,30 @@ pub struct TimerPopup {
 /// This version centers the window and buttons and auto-sizes to its content.
 /// The window title is set to an empty string so that the custom message is shown at the top.
 impl App for TimerPopup {
+    fn on_close_event(&mut self) -> bool {
+        // When window X button is clicked, send Stop action
+        if let Some(s) = self.sender.take() {
+            let _ = s.send(TimerAction::Stop);
+        }
+        true // Allow window to close
+    }
+    
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
+        let key_snooze = get_action_key("TT_KEY_SNOOZE", egui::Key::Z);
+        let key_restart = get_action_key("TT_KEY_RESTART", egui::Key::R);
+        let key_stop = get_action_key("TT_KEY_STOP", egui::Key::S);
+        
+        if ctx.input(|i| i.key_pressed(key_snooze)) {
             if let Some(s) = self.sender.take() {
                 let _ = s.send(TimerAction::Snooze);
             }
             frame.close();
-        } else if ctx.input(|i| i.key_pressed(egui::Key::R)) {
+        } else if ctx.input(|i| i.key_pressed(key_restart)) {
             if let Some(s) = self.sender.take() {
                 let _ = s.send(TimerAction::Restart);
             }
             frame.close();
-        } else if ctx.input(|i| i.key_pressed(egui::Key::S) || i.key_pressed(egui::Key::Escape)) {
+        } else if ctx.input(|i| i.key_pressed(key_stop) || i.key_pressed(egui::Key::Escape)) {
             if let Some(s) = self.sender.take() {
                 let _ = s.send(TimerAction::Stop);
             }
@@ -884,17 +1001,21 @@ impl App for TimerPopup {
                 ui.add_space(20.0);
 
                 let (_snooze_duration, snooze_str) = get_snooze_duration_and_str();
+                let key_snooze_char = get_action_key_char("TT_KEY_SNOOZE", 'z');
+                let key_restart_char = get_action_key_char("TT_KEY_RESTART", 'r');
+                let key_stop_char = get_action_key_char("TT_KEY_STOP", 's');
+                
                 let buttons = [
                     (
-                        styled_button_label("[ z ] ", Color32::from_rgb(128, 128, 255), &format!("Snooze ({})", snooze_str)),
+                        styled_button_label(&format!("[ {} ] ", key_snooze_char), Color32::from_rgb(128, 128, 255), &format!("Snooze ({})", snooze_str)),
                         TimerAction::Snooze,
                     ),
                     (
-                        styled_button_label("[ r ] ", Color32::from_rgb(0, 255, 128), "Restart"),
+                        styled_button_label(&format!("[ {} ] ", key_restart_char), Color32::from_rgb(0, 255, 128), "Restart"),
                         TimerAction::Restart,
                     ),
                     (
-                        styled_button_label("[ s ] ", Color32::from_rgb(255, 0, 0), "Stop"),
+                        styled_button_label(&format!("[ {} ] ", key_stop_char), Color32::from_rgb(255, 0, 0), "Stop"),
                         TimerAction::Stop,
                     ),
                 ];
@@ -1062,6 +1183,12 @@ fn main() {
         return;
     }
     let duration_str = args.duration.unwrap_or_else(|| {
+        // Check for TT_DEFAULT_DURATION env var
+        if let Ok(default_dur) = std::env::var("TT_DEFAULT_DURATION") {
+            if parse_duration(&default_dur).is_ok() {
+                return default_dur;
+            }
+        }
         eprintln!("Duration string required unless using --logs (-l), --active (-a), --kill, or --update (-u)");
         process::exit(1);
     });
@@ -1074,8 +1201,10 @@ fn main() {
     };
     let popup_message = args.message.unwrap_or_else(|| "".to_string());
     
-    // Calculate end time for display
-    let end_time = chrono::Local::now() + chrono::Duration::from_std(duration).unwrap();
+    // Calculate start and end time for display
+    let start_time = chrono::Local::now();
+    let end_time = start_time + chrono::Duration::from_std(duration).unwrap();
+    let start_time_str = start_time.format("%-I:%M %p").to_string();
     let end_time_str = end_time.format("%-I:%M %p").to_string();
 
     // If running in foreground, use the existing connection.
@@ -1084,7 +1213,7 @@ fn main() {
         // Only log to DB if not background child (parent already logged it)
         if !args.background_child {
             log_timer_creation_db(&conn, &duration_str, &popup_message, args.fg).unwrap();
-            print_timer_started_box(&duration_str, &popup_message, &end_time_str, false);
+            print_timer_started_box(&duration_str, &popup_message, &start_time_str, &end_time_str, false);
         }
         run_timer(duration, duration_str, popup_message.clone(), args.fg);
     } else {
@@ -1120,7 +1249,7 @@ fn main() {
             
             match cmd.spawn() {
                 Ok(_) => {
-                    print_timer_started_box(&duration_str, &popup_message, &end_time_str, true);
+                    print_timer_started_box(&duration_str, &popup_message, &start_time_str, &end_time_str, true);
                 }
                 Err(e) => {
                     eprintln!("Error spawning background process: {}", e);
@@ -1148,7 +1277,7 @@ fn main() {
             
             match cmd.spawn() {
                 Ok(_) => {
-                    print_timer_started_box(&duration_str, &popup_message, &end_time_str, true);
+                    print_timer_started_box(&duration_str, &popup_message, &start_time_str, &end_time_str, true);
                 }
                 Err(e) => {
                     eprintln!("Error spawning background process: {}", e);
