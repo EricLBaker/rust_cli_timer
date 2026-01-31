@@ -3,7 +3,7 @@
 A fast, cross-platform command-line timer with notifications and sound alerts.
 
 ```bash
-tt 5m "Take a break"
+tt 25m "Pomodoro"
 ```
 
 <img src="https://github.com/EricLBaker/rust_cli_timer/raw/main/assets/tt_output_pomodoro.png" width="350" alt="Timer started output">
