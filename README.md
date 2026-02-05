@@ -24,6 +24,12 @@ curl -fsSL https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/inst
 iwr -useb https://raw.githubusercontent.com/EricLBaker/rust_cli_timer/main/install.ps1 | iex
 ```
 
+**Using Cargo**
+
+```shell
+cargo install --git https://github.com/EricLBaker/rust_cli_timer
+```
+
 The installer automatically:
 
 - Downloads the binary (or builds from source if needed)
